@@ -40,7 +40,7 @@ public class InutilizacaoClientTests
             cUf: 43, ano: 2026, cnpj: "12345678000195",
             modelo: ModeloDocumento.NFe, serie: 1, ini: 105, fin: 110);
 
-        Assert.Equal("ID4326123456780001955500100000010500000011", id.Replace(" ", ""));
+        Assert.Equal("ID43261234567800019555001000000105000000110", id.Replace(" ", ""));
         Assert.Equal(43, id.Length);
         Assert.StartsWith("ID", id);
     }

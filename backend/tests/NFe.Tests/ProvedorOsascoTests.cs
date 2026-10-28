@@ -124,7 +124,7 @@ public sealed class ProvedorOsascoTests
 
         Assert.Empty(erros);
         Assert.Equal(PadraoNfse.Osasco, cfg.Padrao);
-        Assert.Equal("1", cfg.SerieDps);
+        Assert.Equal("00001", cfg.SerieDps); // serie normalizada para 5 digitos
         Assert.Equal(OpcaoSimplesNacional.NaoOptante, cfg.OpSimpNac);
         Assert.Equal("chave-json", cfg.OsascoChaveAutenticacao);
         Assert.Equal("123", prestador.InscricaoMunicipal);
