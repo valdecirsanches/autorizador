@@ -20,7 +20,7 @@ import {
 
 /**
  * Pasta (no servidor da API) com os XMLs ja emitidos, organizada em
- * AAAAMM/NFe e AAAAMM/Evento. Com ela configurada, a API completa sozinha o XML
+ * periodo (NFeAAAAMM/NFe, AAAAMM/NFe...) com NFe e Evento. Com ela configurada, a API completa sozinha o XML
  * das notas cadastradas pela consulta e o DANFE passa a ser gerado.
  */
 export function ConfigPastaXml({
@@ -79,9 +79,9 @@ export function ConfigPastaXml({
         <DialogHeader>
           <DialogTitle>Pasta de XMLs · {empresa.razaoSocial}</DialogTitle>
           <DialogDescription>
-            Caminho completo, no servidor da API, da pasta que contém as subpastas por mês (202610, 202611…),
-            cada uma com NFe e Evento. Só a subpasta NFe é lida para achar o XML da nota. Deixe vazio para
-            remover.
+            Caminho completo, no servidor da API, da pasta do CNPJ que contém as subpastas por período
+            (NFe202610, NFe20261028 ou 202610…), cada uma com NFe e Evento. Só a subpasta NFe é lida para
+            achar o XML da nota. Deixe vazio para remover.
           </DialogDescription>
         </DialogHeader>
 
@@ -95,7 +95,7 @@ export function ConfigPastaXml({
               setDiag(null)
             }}
             className="font-mono text-xs"
-            placeholder="/mnt/hdbackup/API/levpao/arquivos/nfe/EDSMonitorPLUS/Arqs/03707154000106/NFe"
+            placeholder="/mnt/hdbackup/API/levpao/arquivos/nfe/EDSMonitorPLUS/Arqs/03707154000106"
             disabled={ocupado}
           />
           {diag ? (

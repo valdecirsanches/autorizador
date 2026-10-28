@@ -1033,13 +1033,18 @@ localiza sozinha pela chave, sem upload manual. A pasta precisa existir **na má
 onde a API roda** e ter permissão de leitura. Estrutura esperada:
 
 ```
-{pasta}/AAAAMM/NFe/*.xml       notas (única subpasta lida)
-{pasta}/AAAAMM/Evento/*.xml    eventos (ignorada)
+{pasta}/{periodo}/NFe/*.xml       notas (única subpasta lida)
+{pasta}/{periodo}/Evento/*.xml    eventos (ignorada)
+
+{periodo} = NFeAAAAMM, NFeAAAAMMDD, AAAAMM ou AAAAMMDD   (ex.: NFe202610, NFe20261028)
 ```
 
-Exemplo: `/mnt/hdbackup/API/levpao/arquivos/nfe/EDSMonitorPLUS/Arqs/03707154000106/NFe`
-(pode ser a pasta que contém `202610`, `202611`… ou a do CNPJ que contém `NFe`).
-A busca começa pelo mês da chave e, se não achar, tenta os demais meses.
+Exemplo (EDS Monitor): `/mnt/hdbackup/API/levpao/arquivos/nfe/EDSMonitorPLUS/Arqs/03707154000106`,
+que contém `NFe202610/NFe`, `NFe202610/Evento`… Também são aceitas a pasta `Arqs`
+(o CNPJ vem da chave), a do CNPJ com uma subpasta `NFe` que contém os períodos, um
+exemplo concreto (`.../NFe202610/NFe`) e o próprio modelo colado com `{...}`.
+A busca começa pelo mês da chave, depois o seguinte e o anterior, e por fim os demais.
+Primeiro procura a chave no nome do arquivo; se não achar, lê o conteúdo dos XMLs do mês da chave.
 
 ```
 PUT /api/empresas/{id}/pasta-xml               { "pasta": "/caminho/absoluto" }   (vazio remove)

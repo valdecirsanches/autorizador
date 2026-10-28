@@ -58,7 +58,7 @@ public class Empresa
 
     /// <summary>
     /// Pasta (na maquina da API) com os XMLs ja emitidos, organizada em
-    /// AAAAMM/NFe e AAAAMM/Evento. Usada para completar notas sem XML.
+    /// {periodo}/NFe e {periodo}/Evento (NFe202610, 202610...). Usada para completar notas sem XML.
     /// </summary>
     public string? PastaXmlBackup { get; set; }
 

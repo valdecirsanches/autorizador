@@ -16,17 +16,29 @@ public sealed record DiagnosticoPastaXml(
     string Mensagem);
 
 /// <summary>
-/// Procura o XML de uma NF-e em uma pasta de backup organizada por mes:
-/// <c>{pasta}/AAAAMM/NFe/*.xml</c> (as notas) e <c>{pasta}/AAAAMM/Evento/*.xml</c>
-/// (os eventos). So a subpasta NFe e lida: o evento nao e o XML da nota.
-/// A pasta informada pode ser a que contem as pastas AAAAMM ou a do CNPJ que
-/// contem uma subpasta NFe.
+/// Procura o XML de uma NF-e em uma pasta de backup organizada por periodo. Aceita
+/// as pastas de periodo nos formatos <c>AAAAMM</c>, <c>AAAAMMDD</c>, <c>NFeAAAAMM</c>
+/// e <c>NFeAAAAMMDD</c> (EDS Monitor), cada uma com as subpastas <c>NFe</c> (notas)
+/// e <c>Evento</c> (eventos). So a subpasta NFe e lida: o evento nao e o XML da nota.
+/// A pasta informada pode ser:
+/// <list type="bullet">
+/// <item>a que contem as pastas de periodo (ex.: <c>.../Arqs/03707154000106</c>);</item>
+/// <item>a do CNPJ com uma subpasta NFe que contem os periodos;</item>
+/// <item>a que contem as pastas por CNPJ (ex.: <c>.../Arqs</c>): o CNPJ vem da chave;</item>
+/// <item>um exemplo concreto (<c>.../NFe202610/NFe</c>) ou o modelo com <c>{...}</c>.</item>
+/// </list>
 /// </summary>
 public static class LocalizadorXmlPasta
 {
     private const long LimiteBytes = 5 * 1024 * 1024;
     private const int LimiteVarreduraConteudo = 5000;
-    private static readonly Regex Mes = new(@"^\d{6}$", RegexOptions.Compiled);
+
+    /// <summary>Pasta de periodo: prefixo NFe opcional, AAAAMM e dia opcional.</summary>
+    private static readonly Regex Periodo = new(
+        @"^(?:nfe)?(?<mes>(?:19|20)\d{2}(?:0[1-9]|1[0-2]))(?<dia>\d{2})?$",
+        RegexOptions.Compiled | RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+
+    private static readonly Regex Cnpj = new(@"^\d{14}$", RegexOptions.Compiled);
 
     private static readonly EnumerationOptions SemRecursao = new()
     {
@@ -41,6 +53,8 @@ public static class LocalizadorXmlPasta
         RecurseSubdirectories = true
     };
 
+    private sealed record PastaPeriodo(string Caminho, string Mes, string Ordem);
+
     /// <summary>Devolve o motivo de a pasta ser invalida, ou null quando aceita.</summary>
     public static string? Validar(string? pasta)
     {
@@ -54,16 +68,29 @@ public static class LocalizadorXmlPasta
 
     public static XmlLocalizado? Localizar(string pasta, string chave)
     {
-        if (Validar(pasta) is not null || chave.Length != 44) return null;
+        if (Validar(pasta) is not null || chave.Length != 44 || !chave.All(char.IsDigit)) return null;
 
         var mesDaChave = "20" + chave.Substring(2, 4);
-        foreach (var raiz in Raizes(pasta))
+        var cnpj = chave.Substring(6, 14);
+
+        // 1a passada: pelo nome do arquivo (rapido), mes da chave e vizinhos primeiro.
+        var periodosVistos = new List<PastaPeriodo>();
+        foreach (var raiz in Raizes(pasta, cnpj))
         {
-            foreach (var mesDir in MesesEmOrdem(raiz, mesDaChave))
+            foreach (var periodo in PeriodosEmOrdem(raiz, mesDaChave))
             {
-                var achado = ProcurarNoMes(mesDir, chave, varrerConteudo: Path.GetFileName(mesDir) == mesDaChave);
+                periodosVistos.Add(periodo);
+                var achado = Melhor(PorNome(periodo.Caminho, chave), chave);
                 if (achado is not null) return achado;
             }
+        }
+
+        // 2a passada: arquivos nomeados de outra forma (ex.: so o numero da nota).
+        // Le o conteudo, mas so das pastas do mes da chave.
+        foreach (var periodo in periodosVistos.Where(p => p.Mes == mesDaChave))
+        {
+            var achado = Melhor(PorConteudo(periodo.Caminho, chave), chave);
+            if (achado is not null) return achado;
         }
         return null;
     }
@@ -73,52 +100,95 @@ public static class LocalizadorXmlPasta
         var erro = Validar(pasta);
         if (erro is not null) return new(false, null, 0, null, 0, erro);
 
-        string completo;
-        try { completo = Path.GetFullPath(pasta.Trim()); }
-        catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
-        {
-            return new(false, null, 0, null, 0, "Caminho invalido.");
-        }
+        var completo = Normalizar(pasta);
+        if (completo is null) return new(false, null, 0, null, 0, "Caminho invalido.");
 
         if (!Directory.Exists(completo))
             return new(false, completo, 0, null, 0,
                 "Pasta nao encontrada neste servidor, ou sem permissao de leitura. " +
                 "Ela precisa existir na maquina onde a API roda.");
 
-        foreach (var raiz in Raizes(completo))
+        foreach (var raiz in Raizes(pasta, cnpj: null))
         {
-            var meses = ListarMeses(raiz);
-            if (meses.Count == 0) continue;
+            var periodos = ListarPeriodos(raiz);
+            if (periodos.Count == 0) continue;
 
-            var ultimo = meses[0];
-            var pastaXml = PastaDeXml(ultimo);
-            var qtd = ContarXml(pastaXml);
-            var nomeMes = Path.GetFileName(ultimo);
-            return new(true, raiz, meses.Count, nomeMes, qtd,
+            var meses = periodos.Select(p => p.Mes).Distinct().Count();
+            var ultimoMes = periodos[0].Mes;
+            var qtd = periodos.Where(p => p.Mes == ultimoMes).Sum(p => ContarXml(PastaDeXml(p.Caminho)));
+            var exemplo = Path.GetFileName(periodos[0].Caminho);
+            return new(true, raiz, meses, ultimoMes, qtd,
                 qtd > 0
-                    ? $"Pasta valida: {meses.Count} mes(es) encontrado(s); o mais recente ({nomeMes}) tem {qtd} XML."
-                    : $"Pasta lida, mas o mes mais recente ({nomeMes}) nao tem XML em '{Path.GetFileName(pastaXml)}'.");
+                    ? $"Pasta valida: {meses} mes(es) encontrado(s) (ex.: {exemplo}); o mais recente ({ultimoMes}) tem {qtd} XML de NF-e."
+                    : $"Pasta lida (ex.: {exemplo}), mas o mes mais recente ({ultimoMes}) nao tem XML na subpasta NFe.");
         }
 
         return new(true, completo, 0, null, 0,
-            "A pasta existe, mas nao tem subpastas de mes no formato AAAAMM (ex.: 202610). " +
-            "Informe a pasta que contem 202610, 202611...");
+            "A pasta existe, mas nao tem subpastas de periodo (ex.: 202610 ou NFe202610). " +
+            "Informe a pasta do CNPJ que contem NFe202610, NFe202611...");
     }
 
-    private static IEnumerable<string> Raizes(string pasta)
+    /// <summary>
+    /// Caminho absoluto normalizado. Se o usuario colou o modelo com {...} ou um exemplo
+    /// concreto (.../NFe202610 ou .../NFe202610/NFe), sobe ate a pasta que contem os periodos.
+    /// </summary>
+    private static string? Normalizar(string pasta)
     {
         string completo;
         try { completo = Path.GetFullPath(pasta.Trim()); }
         catch (Exception ex) when (ex is ArgumentException or NotSupportedException or PathTooLongException)
         {
-            yield break;
+            return null;
         }
 
-        if (!Directory.Exists(completo)) yield break;
-        yield return completo;
+        var partes = completo.Split(Path.DirectorySeparatorChar);
+        var corte = Array.FindIndex(partes, p => p.Contains('{') || p.Contains('}') || p.Contains('*'));
+        if (corte > 0)
+            completo = string.Join(Path.DirectorySeparatorChar, partes.Take(corte));
 
-        var nfe = Subpasta(completo, "NFe");
-        if (nfe is not null) yield return nfe;
+        completo = Path.TrimEndingDirectorySeparator(completo);
+        var nome = Path.GetFileName(completo);
+        var pai = Path.GetDirectoryName(completo);
+
+        // .../NFe202610/NFe  ou  .../NFe202610/Evento
+        if (pai is not null && (nome.Equals("NFe", StringComparison.OrdinalIgnoreCase) ||
+                                nome.Equals("Evento", StringComparison.OrdinalIgnoreCase))
+            && Periodo.IsMatch(Path.GetFileName(pai)))
+            return Path.GetDirectoryName(pai) ?? completo;
+
+        // .../NFe202610
+        if (pai is not null && Periodo.IsMatch(nome)) return pai;
+
+        return string.IsNullOrEmpty(completo) ? null : completo;
+    }
+
+    private static IEnumerable<string> Raizes(string pasta, string? cnpj)
+    {
+        var completo = Normalizar(pasta);
+        if (completo is null || !Directory.Exists(completo)) yield break;
+
+        var vistas = new HashSet<string>(StringComparer.Ordinal);
+        IEnumerable<string?> Candidatas(string dir)
+        {
+            yield return dir;
+            yield return Subpasta(dir, "NFe");
+        }
+
+        var bases = new List<string> { completo };
+        if (cnpj is not null)
+        {
+            var doCnpj = Subpasta(completo, cnpj);
+            if (doCnpj is not null) bases.Add(doCnpj);
+        }
+        else
+        {
+            // Diagnostico sem chave: aceita a pasta que contem as pastas por CNPJ.
+            bases.AddRange(Subpastas(completo).Where(d => Cnpj.IsMatch(Path.GetFileName(d))).Take(20));
+        }
+
+        foreach (var b in bases)
+            foreach (var c in Candidatas(b))
+                if (c is not null && vistas.Add(c)) yield return c;
     }
 
     private static string? Subpasta(string dir, string nome)
@@ -133,15 +203,11 @@ public static class LocalizadorXmlPasta
         }
     }
 
-    /// <summary>Pastas AAAAMM da raiz, da mais recente para a mais antiga.</summary>
-    private static List<string> ListarMeses(string raiz)
+    private static List<string> Subpastas(string dir)
     {
         try
         {
-            return Directory.EnumerateDirectories(raiz, "*", SemRecursao)
-                .Where(d => Mes.IsMatch(Path.GetFileName(d)))
-                .OrderByDescending(d => Path.GetFileName(d), StringComparer.Ordinal)
-                .ToList();
+            return Directory.EnumerateDirectories(dir, "*", SemRecursao).ToList();
         }
         catch (Exception ex) when (ex is IOException or UnauthorizedAccessException)
         {
@@ -149,32 +215,48 @@ public static class LocalizadorXmlPasta
         }
     }
 
-    /// <summary>
-    /// Mes da chave primeiro, depois os vizinhos (a nota pode ser arquivada no mes da
-    /// autorizacao) e por fim os demais, do mais recente ao mais antigo.
-    /// </summary>
-    private static IEnumerable<string> MesesEmOrdem(string raiz, string mesDaChave)
+    /// <summary>Pastas de periodo da raiz, da mais recente para a mais antiga.</summary>
+    private static List<PastaPeriodo> ListarPeriodos(string raiz)
     {
-        var todos = ListarMeses(raiz);
-        var porNome = todos.ToDictionary(d => Path.GetFileName(d), d => d, StringComparer.Ordinal);
+        var lista = new List<PastaPeriodo>();
+        foreach (var d in Subpastas(raiz))
+        {
+            var m = Periodo.Match(Path.GetFileName(d));
+            if (!m.Success) continue;
+            var mes = m.Groups["mes"].Value;
+            var dia = m.Groups["dia"].Success ? m.Groups["dia"].Value : "99";
+            lista.Add(new PastaPeriodo(d, mes, mes + dia));
+        }
+        return lista.OrderByDescending(p => p.Ordem, StringComparer.Ordinal).ToList();
+    }
+
+    /// <summary>
+    /// Mes da chave primeiro (a chave traz o mes de emissao), depois o seguinte e o
+    /// anterior (a nota pode ser arquivada no mes da autorizacao) e por fim os demais,
+    /// do mais recente ao mais antigo.
+    /// </summary>
+    private static IEnumerable<PastaPeriodo> PeriodosEmOrdem(string raiz, string mesDaChave)
+    {
+        var todos = ListarPeriodos(raiz);
 
         var prioritarios = new List<string> { mesDaChave };
-        if (int.TryParse(mesDaChave[..4], out var ano) && int.TryParse(mesDaChave[4..], out var mes))
+        if (int.TryParse(mesDaChave[..4], out var ano) && int.TryParse(mesDaChave[4..], out var mes)
+            && mes is >= 1 and <= 12)
         {
-            var seguinte = new DateTime(ano, mes, 1).AddMonths(1);
-            var anterior = new DateTime(ano, mes, 1).AddMonths(-1);
-            prioritarios.Add(seguinte.ToString("yyyyMM"));
-            prioritarios.Add(anterior.ToString("yyyyMM"));
+            var inicio = new DateTime(ano, mes, 1);
+            prioritarios.Add(inicio.AddMonths(1).ToString("yyyyMM"));
+            prioritarios.Add(inicio.AddMonths(-1).ToString("yyyyMM"));
         }
 
         var vistos = new HashSet<string>(StringComparer.Ordinal);
-        foreach (var nome in prioritarios)
-            if (porNome.TryGetValue(nome, out var dir) && vistos.Add(nome)) yield return dir;
-        foreach (var d in todos)
-            if (vistos.Add(Path.GetFileName(d))) yield return d;
+        foreach (var m in prioritarios)
+            foreach (var p in todos.Where(p => p.Mes == m))
+                if (vistos.Add(p.Caminho)) yield return p;
+        foreach (var p in todos)
+            if (vistos.Add(p.Caminho)) yield return p;
     }
 
-    private static string PastaDeXml(string mesDir) => Subpasta(mesDir, "NFe") ?? mesDir;
+    private static string PastaDeXml(string periodoDir) => Subpasta(periodoDir, "NFe") ?? periodoDir;
 
     private static int ContarXml(string pasta)
     {
@@ -188,29 +270,29 @@ public static class LocalizadorXmlPasta
         }
     }
 
-    private static XmlLocalizado? ProcurarNoMes(string mesDir, string chave, bool varrerConteudo)
+    /// <summary>Sem subpasta NFe, ignora o que estiver dentro de uma pasta Evento.</summary>
+    private static Func<string, bool> ForaDeEvento(string periodoDir, out string pastaXml)
     {
-        var pastaXml = PastaDeXml(mesDir);
-        var semSubpastaNfe = pastaXml == mesDir;
+        pastaXml = PastaDeXml(periodoDir);
+        var semSubpastaNfe = pastaXml == periodoDir;
+        return caminho => !semSubpastaNfe || !caminho.Contains(
+            Path.DirectorySeparatorChar + "Evento" + Path.DirectorySeparatorChar,
+            StringComparison.OrdinalIgnoreCase);
+    }
 
-        bool ForaDeEvento(string caminho) =>
-            !semSubpastaNfe || !caminho.Contains(
-                Path.DirectorySeparatorChar + "Evento" + Path.DirectorySeparatorChar,
-                StringComparison.OrdinalIgnoreCase);
+    private static IEnumerable<string> PorNome(string periodoDir, string chave)
+    {
+        var filtro = ForaDeEvento(periodoDir, out var pastaXml);
+        return Enumerar(pastaXml, $"*{chave}*.xml", ComRecursao).Where(filtro).Take(20);
+    }
 
-        var porNome = Enumerar(pastaXml, $"*{chave}*.xml", ComRecursao)
-            .Where(ForaDeEvento).Take(20).ToList();
-
-        var melhor = Melhor(porNome, chave);
-        if (melhor is not null || !varrerConteudo) return melhor;
-
-        // Arquivos nomeados de outra forma (ex.: so o numero da nota): le o conteudo.
-        var jaVistos = new HashSet<string>(porNome, StringComparer.Ordinal);
-        var restantes = Enumerar(pastaXml, "*.xml", ComRecursao)
-            .Where(ForaDeEvento)
-            .Where(c => !jaVistos.Contains(c))
+    private static IEnumerable<string> PorConteudo(string periodoDir, string chave)
+    {
+        var filtro = ForaDeEvento(periodoDir, out var pastaXml);
+        return Enumerar(pastaXml, "*.xml", ComRecursao)
+            .Where(filtro)
+            .Where(c => !Path.GetFileName(c).Contains(chave, StringComparison.Ordinal))
             .Take(LimiteVarreduraConteudo);
-        return Melhor(restantes, chave);
     }
 
     private static IEnumerable<string> Enumerar(string pasta, string padrao, EnumerationOptions opcoes)
