@@ -1066,4 +1066,17 @@ public class GeradorXmlNFeTests
 
         Assert.Contains("cClassTrib", ex.Message);
     }
+
+    [Theory]
+    [InlineData("2151530921415354", null)]          // dois telefones colados (16 digitos)
+    [InlineData("(11) 3687-7622", "1136877622")]
+    [InlineData("12345", null)]
+    [InlineData("", null)]
+    [InlineData(null, null)]
+    public void Fone_segue_o_schema_ou_e_omitido(string? entrada, string? esperado)
+    {
+        var el = GeradorXmlNFe.Fone(entrada);
+
+        Assert.Equal(esperado, el?.Value);
+    }
 }

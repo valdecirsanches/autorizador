@@ -210,7 +210,7 @@ public sealed class GeradorXmlNFe
             new XElement(Ns + "CEP", emit.Cep),
             new XElement(Ns + "cPais", emit.CodigoPais),
             new XElement(Ns + "xPais", emit.NomePais),
-            Opcional("fone", emit.Telefone));
+            Fone(emit.Telefone));
 
         return new XElement(Ns + "emit",
             new XElement(Ns + "CNPJ", emit.Cnpj),
@@ -242,7 +242,7 @@ public sealed class GeradorXmlNFe
             new XElement(Ns + "CEP", dest.Cep),
             new XElement(Ns + "cPais", dest.CodigoPais),
             new XElement(Ns + "xPais", dest.NomePais),
-            Opcional("fone", dest.Telefone));
+            Fone(dest.Telefone));
 
         var elementos = new List<object> { elementoDoc, new XElement(Ns + "xNome", nome), ender };
 
@@ -981,6 +981,17 @@ public sealed class GeradorXmlNFe
     }
 
     // --- Utilitarios ---
+
+    /// <summary>
+    /// Telefone no schema da NF-e: so digitos, de 6 a 14 (TFone). O campo e opcional,
+    /// entao um numero fora do padrao (ex.: dois telefones colados) e omitido em vez de
+    /// derrubar a nota com a rejeicao 225 (falha no schema).
+    /// </summary>
+    internal static XElement? Fone(string? telefone)
+    {
+        var digitos = SoDigitos(telefone ?? string.Empty);
+        return digitos.Length is >= 6 and <= 14 ? new XElement(Ns + "fone", digitos) : null;
+    }
 
     private static XElement? Opcional(string nome, string? valor) =>
         string.IsNullOrWhiteSpace(valor) ? null : new XElement(Ns + nome, valor);
