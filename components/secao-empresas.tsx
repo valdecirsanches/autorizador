@@ -7,6 +7,7 @@ import {
   Search,
   ImageOff,
   ImageUp,
+  ClipboardPaste,
   Trash2,
   FolderOpen,
 } from "lucide-react";
@@ -818,6 +819,13 @@ function formatDiagnosticBody(text: string) {
     : formatted;
 }
 
+/** Explicacao mostrada quando o seletor devolve "cancelado" sem arquivo. */
+const DICA_SELETOR =
+  "Nenhum arquivo chegou ao painel. Se você escolheu um arquivo, o navegador não conseguiu lê-lo: " +
+  "no Ubuntu, Firefox/Chromium instalados como snap só leem arquivos da sua pasta pessoal " +
+  "(não de /mnt, pendrive, rede ou pastas ocultas). Copie a imagem para Downloads e tente de novo, " +
+  "ou use o botão Colar (Ctrl+V).";
+
 function LogoUpload({
   empresa,
   onMudou,
@@ -869,7 +877,7 @@ function LogoUpload({
         aguardandoArquivo.current = false;
         passo(
           "Seletor fechou sem arquivo",
-          "Nenhum arquivo chegou ao painel (cancelado no seletor, ou o navegador não disparou o evento 'change').",
+          DICA_SELETOR,
           "aviso",
         );
       }, 1500);
@@ -890,12 +898,69 @@ function LogoUpload({
     const aoCancelar = () => {
       if (!aguardandoArquivo.current) return;
       aguardandoArquivo.current = false;
-      passo("Seletor cancelado", "O seletor foi fechado sem escolher arquivo (evento 'cancel').", "aviso");
+      passo("Seletor cancelado", DICA_SELETOR, "aviso");
     };
     el.addEventListener("cancel", aoCancelar);
     return () => el.removeEventListener("cancel", aoCancelar);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [chaveInput]);
+
+  // ---- Colar com Ctrl+V: caminho que nao depende do seletor de arquivos do
+  // sistema (no Ubuntu, navegador snap nao le arquivos fora da pasta pessoal e
+  // o seletor devolve "cancelado"). Funciona em HTTP comum, sem HTTPS.
+  const [aguardandoColar, setAguardandoColar] = useState(false);
+  useEffect(() => {
+    if (!aguardandoColar) return;
+    const aoColar = (e: ClipboardEvent) => {
+      e.preventDefault();
+      setAguardandoColar(false);
+      const dados = e.clipboardData;
+      const tipos = dados ? [...dados.types].join(", ") : "(sem dados)";
+      let arquivo: File | null = null;
+      if (dados) {
+        arquivo = [...dados.files].find((f) => f.type.startsWith("image/")) ?? null;
+        if (!arquivo) {
+          for (const item of [...dados.items]) {
+            if (item.kind === "file" && item.type.startsWith("image/")) {
+              arquivo = item.getAsFile();
+              if (arquivo) break;
+            }
+          }
+        }
+      }
+      if (!arquivo) {
+        passo(
+          "Colado sem imagem",
+          `tipos=[${tipos}]. Copie a IMAGEM (abra o logo e use Ctrl+C, ou clique com o botão direito > Copiar imagem), não o arquivo no gerenciador de arquivos.`,
+          "erro",
+        );
+        return;
+      }
+      const nomeFinal = arquivo.name && arquivo.name !== "image.png" ? arquivo.name : `logo-colado.${arquivo.type.split("/")[1] ?? "png"}`;
+      const colado = new File([arquivo], nomeFinal, { type: arquivo.type });
+      passo("Imagem colada", descreverArquivo(colado));
+      setNomeArquivoSelecionado(colado.name);
+      void enviar(colado);
+    };
+    const aoTeclar = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setAguardandoColar(false);
+        passo("Colar cancelado", "Esc pressionado.", "aviso");
+      }
+    };
+    const expirar = window.setTimeout(() => {
+      setAguardandoColar(false);
+      passo("Colar expirou", "Nenhum Ctrl+V em 60 s.", "aviso");
+    }, 60_000);
+    window.addEventListener("paste", aoColar);
+    window.addEventListener("keydown", aoTeclar);
+    return () => {
+      window.clearTimeout(expirar);
+      window.removeEventListener("paste", aoColar);
+      window.removeEventListener("keydown", aoTeclar);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [aguardandoColar]);
 
   // Lista de empresas: registra quando o "temLogo" desta empresa muda.
   const temLogoAnterior = useRef(empresa.temLogo);
@@ -1248,6 +1313,26 @@ function LogoUpload({
       >
         {enviando ? <Spinner data-icon="inline-start" /> : <ImageUp data-icon="inline-start" />}
         {enviando ? "Enviando…" : empresa.temLogo ? "Trocar" : "Enviar logo"}
+      </Button>
+      <Button
+        type="button"
+        variant={aguardandoColar ? "default" : "ghost"}
+        size="sm"
+        className="shrink-0"
+        disabled={enviando}
+        onClick={() => {
+          if (aguardandoColar) {
+            setAguardandoColar(false);
+            return;
+          }
+          passo("Aguardando Ctrl+V", "Copie a imagem do logo e pressione Ctrl+V nesta página.");
+          setAguardandoColar(true);
+        }}
+        aria-label={`Colar logo de ${empresa.razaoSocial} com Ctrl+V`}
+        title="Colar a imagem copiada (Ctrl+V). Use se o seletor de arquivos não funcionar."
+      >
+        <ClipboardPaste data-icon="inline-start" />
+        {aguardandoColar ? "Pressione Ctrl+V…" : "Colar"}
       </Button>
       {ultimo ? (
         <span
