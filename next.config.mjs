@@ -13,7 +13,7 @@ function git(args) {
  * Versao automatica: MAIOR.MENOR vem do package.json (mude la so em mudancas
  * grandes) e o PATCH e o numero de commits. Cada atualizacao publicada gera
  * um commit, entao a versao sobe sozinha. Em clone raso (contagem incorreta)
- * ou sem git, cai para o hash do commit informado pela Vercel.
+ * ou sem git, usa a versao do package.json.
  */
 function resolverVersao() {
   const pkg = JSON.parse(readFileSync(new URL("./package.json", import.meta.url), "utf8"))
@@ -21,7 +21,7 @@ function resolverVersao() {
 
   const raso = git("rev-parse --is-shallow-repository") === "true"
   const contagem = raso ? "" : git("rev-list --count HEAD")
-  const hash = (process.env.VERCEL_GIT_COMMIT_SHA || git("rev-parse HEAD")).slice(0, 7)
+  const hash = git("rev-parse HEAD").slice(0, 7)
 
   return {
     versao: contagem ? `${maior}.${menor}.${contagem}` : String(pkg.version),

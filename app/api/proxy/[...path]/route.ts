@@ -40,7 +40,7 @@ async function encaminhar(req: NextRequest, path: string[]) {
   const { url: API_BASE } = await resolverApiBase()
   const { token } = await resolverApiToken()
   if (!token) {
-    console.error('[v0] proxy: NFE_API_TOKEN nao definido no ambiente do painel.')
+    console.error('[painel] proxy: NFE_API_TOKEN nao definido no ambiente do painel.')
     return NextResponse.json(
       { erro: 'Painel mal configurado: NFE_API_TOKEN ausente no servidor.' },
       { status: 500 },
@@ -97,19 +97,19 @@ async function encaminhar(req: NextRequest, path: string[]) {
       } catch {
         detalhe = '<corpo binario>'
       }
-      console.error(`[v0] proxy ${rota} -> ${resp.status} (${ms}ms) ${detalhe}`)
+      console.error(`[painel] proxy ${rota} -> ${resp.status} (${ms}ms) ${detalhe}`)
       // 401 do backend = token divergente. Logamos o fingerprint do token que
       // o painel ENVIOU para voce comparar com o "[auth] ... Fingerprint=" do
       // log de startup da API. Iguais => o problema nao e o token; diferentes
       // => painel e API estao com tokens distintos (confira o .env de cada um).
       if (resp.status === 401) {
         console.error(
-          `[v0] proxy: 401 do backend. Fingerprint do token do PAINEL=${fingerprintToken(token)} ` +
+          `[painel] proxy: 401 do backend. Fingerprint do token do PAINEL=${fingerprintToken(token)} ` +
             `(comprimento=${token.length}). Compare com o fingerprint no startup da API.`,
         )
       }
     } else {
-      console.log(`[v0] proxy ${rota} -> ${resp.status} (${ms}ms)`)
+      console.log(`[painel] proxy ${rota} -> ${resp.status} (${ms}ms)`)
     }
 
     return new NextResponse(
@@ -129,7 +129,7 @@ async function encaminhar(req: NextRequest, path: string[]) {
   } catch (e) {
     const ms = Date.now() - inicio
     const causa = e instanceof Error ? e.message : String(e)
-    console.error(`[v0] proxy ${rota} -> FALHA DE REDE (${ms}ms): ${causa}`)
+    console.error(`[painel] proxy ${rota} -> FALHA DE REDE (${ms}ms): ${causa}`)
     return NextResponse.json(
       {
         erro:

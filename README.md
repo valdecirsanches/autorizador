@@ -221,6 +221,10 @@ pnpm build
 pnpm start
 ```
 
+Para instalar no seu servidor como serviço (systemd + nginx, sem Vercel), siga
+[`docs/INSTALACAO_DO_ZERO.md`](docs/INSTALACAO_DO_ZERO.md) e use
+`deploy/painel/instalar-painel.sh`.
+
 ---
 
 ## Schemas XSD

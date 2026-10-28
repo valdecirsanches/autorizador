@@ -1109,7 +1109,8 @@ openssl rand -base64 48   # para PAINEL_SESSION_SECRET
   `[env] Variaveis carregadas de: .../.env.local`.
 - **Rodando via systemd**: use o `EnvironmentFile` do serviço apontando para o
   **mesmo** `.env.local` (evita duplicar variáveis em `/etc`).
-- **Painel na Vercel**: em *Project Settings → Environment Variables*.
+- **Painel (Next.js) no servidor**: no `EnvironmentFile` do servico do painel
+  (`/etc/aprovador-painel.env`, ver `deploy/painel/`).
 
 Nunca preencha o mesmo valor em dois lugares ao mesmo tempo — escolha um modo.
 No startup, a API também imprime a impressão digital da chave mestra ativa

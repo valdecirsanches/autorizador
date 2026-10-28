@@ -1,6 +1,6 @@
 /**
  * Configuracao de runtime do painel (URL e token da API .NET), editavel pela
- * propria interface — sem depender das variaveis de ambiente do Vercel/servidor.
+ * propria interface — sem precisar editar variaveis de ambiente no servidor.
  *
  * Por que existe: alternar o destino da API pelo painel de "Vars" se mostrou
  * confuso e propenso a erro (valores duplicados _2/_3, precedencia do Next). Aqui
@@ -24,10 +24,13 @@ export interface ConfigRuntime {
 export type OrigemValor = "painel" | "ambiente" | "padrao" | "preview"
 
 const PADRAO_API = "http://127.0.0.1:5240"
-const PREVIEW_API = "https://nfe-api.x-star.com.br"
+// URL fixa opcional (ex.: um painel de testes que deve SEMPRE falar com a API de
+// homologacao). Definida, ela vence a tela "Configuracao da API" e a NFE_API_URL.
+// Antes isto era ligado automaticamente em preview da Vercel e em `next dev`.
+const API_FIXA = process.env.NFE_API_URL_FIXA?.trim() || ""
 
 export function isPreviewApiFixa(): boolean {
-  return process.env.VERCEL_ENV === "preview" || process.env.NODE_ENV === "development"
+  return API_FIXA !== "" && urlValida(API_FIXA)
 }
 
 // Diretorio de dados persistente. Em producao (EC2) aponte PAINEL_DATA_DIR para
@@ -85,7 +88,7 @@ async function gravarArquivo(cfg: ConfigRuntime): Promise<void> {
 
 /** URL efetiva da API: painel (arquivo) > ambiente (env) > padrao local. */
 export async function resolverApiBase(): Promise<{ url: string; origem: OrigemValor }> {
-  if (isPreviewApiFixa()) return { url: PREVIEW_API, origem: "preview" }
+  if (isPreviewApiFixa()) return { url: limparUrl(API_FIXA), origem: "preview" }
 
   const cfg = await lerArquivo()
   if (cfg.apiUrl && urlValida(cfg.apiUrl)) return { url: limparUrl(cfg.apiUrl), origem: "painel" }

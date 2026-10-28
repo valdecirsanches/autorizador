@@ -30,11 +30,11 @@ export async function GET(
       headers: LOOKUP_HEADERS,
     })
     if (resp.status === 404) {
-      console.log(`[v0] lookup/cnpj ${cnpj} -> 404 nao encontrado`)
+      console.log(`[painel] lookup/cnpj ${cnpj} -> 404 nao encontrado`)
       return NextResponse.json({ erro: "CNPJ não encontrado." }, { status: 404 })
     }
     if (!resp.ok) {
-      console.error(`[v0] lookup/cnpj ${cnpj} -> BrasilAPI ${resp.status}`)
+      console.error(`[painel] lookup/cnpj ${cnpj} -> BrasilAPI ${resp.status}`)
       return NextResponse.json(
         { erro: "Não foi possível consultar o CNPJ." },
         { status: 502 },
@@ -49,7 +49,7 @@ export async function GET(
     const cnpjRetornado = String(d.cnpj ?? d.estabelecimento?.cnpj ?? "").replace(/\D/g, "")
     if (cnpjRetornado && cnpjRetornado !== cnpj) {
       console.error(
-        `[v0] lookup/cnpj divergência: pedido=${cnpj} retornado=${cnpjRetornado}`,
+        `[painel] lookup/cnpj divergência: pedido=${cnpj} retornado=${cnpjRetornado}`,
       )
       return NextResponse.json(
         { erro: "O serviço retornou um CNPJ diferente do pesquisado." },

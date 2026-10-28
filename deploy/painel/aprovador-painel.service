@@ -1,0 +1,33 @@
+# =====================================================================
+# Servico systemd do PAINEL (Next.js). Modelo versionado: o instalador
+# deploy/painel/instalar-painel.sh troca os placeholders e grava em
+# /etc/systemd/system/aprovador-painel.service.
+#
+#   __NODE__     -> caminho do node (ex.: /usr/bin/node)
+#   __APPDIR__   -> pasta do projeto clonado (onde fica o package.json)
+#   __USER__     -> usuario que roda o servico
+#   __ENVFILE__  -> arquivo de variaveis (padrao /etc/aprovador-painel.env)
+#   __PORT__     -> porta local (padrao 3000; o nginx faz o proxy)
+# =====================================================================
+[Unit]
+Description=Painel do Autorizador NF-e (Next.js)
+After=network.target aprovador-nfe.service
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APPDIR__
+ExecStart=__NODE__ __APPDIR__/node_modules/next/dist/bin/next start -p __PORT__ -H 127.0.0.1
+EnvironmentFile=__ENVFILE__
+Environment=NODE_ENV=production
+Environment=NEXT_TELEMETRY_DISABLED=1
+Restart=always
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aprovador-painel
+NoNewPrivileges=true
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target
