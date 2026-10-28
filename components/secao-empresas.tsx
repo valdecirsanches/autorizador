@@ -17,7 +17,6 @@ import { fetcher, postJson, del, ApiError } from "@/lib/api";
 import type { Empresa, RegimeTributario } from "@/lib/types";
 import { prepararLogo } from "@/lib/preparar-logo";
 import { rastrear, type NivelRastro } from "@/lib/rastro-logo";
-import { RastroLogo } from "./rastro-logo";
 import {
   LogoUploadDiagnosticDialog,
   type LogoUploadDiagnostic,
@@ -678,9 +677,6 @@ export function SecaoEmpresas() {
           </Table>
         </Card>
       )}
-
-      {/* Depuracao: rastreio ao vivo do envio de logo. */}
-      <RastroLogo />
     </div>
   );
 }
@@ -852,7 +848,7 @@ function LogoUpload({
   const [ultimo, setUltimo] = useState<{ texto: string; nivel: NivelRastro } | null>(null);
   function passo(etapa: string, detalhe?: string, nivel: NivelRastro = "info") {
     rastrear(nomeEmpresa, etapa, detalhe, nivel);
-    if (nivel !== "info") setUltimo({ texto: detalhe ? `${etapa}: ${detalhe}` : etapa, nivel });
+    if (nivel === "erro") setUltimo({ texto: detalhe ? `${etapa}: ${detalhe}` : etapa, nivel });
   }
   const descreverArquivo = (f: File) =>
     `"${f.name}" · ${f.type || "tipo vazio"} · ${(f.size / 1024).toFixed(1)} KB`;
@@ -1020,7 +1016,7 @@ function LogoUpload({
       size: arquivo.size,
     };
     setDiagnostico({ state: "preparing", requestUrl, originalFile });
-    setDiagnosticoAberto(true);
+    setUltimo(null);
     passo("Preparando imagem", descreverArquivo(arquivo));
 
     if (arquivo.size > 25 * 1024 * 1024) {
@@ -1103,6 +1099,7 @@ function LogoUpload({
         toast.error("Falha ao enviar o logo", {
           description: error,
           duration: 15000,
+          action: { label: "Ver diagnóstico", onClick: () => setDiagnosticoAberto(true) },
         });
         return;
       }
@@ -1168,7 +1165,7 @@ function LogoUpload({
       passo(confirmed ? "Concluído" : "Concluído com erro", confirmed ? "logo gravado e lido de volta" : "o GET não devolveu a imagem", confirmed ? "ok" : "erro");
       if (confirmed) {
         toast.success("Logo enviado e confirmado no servidor", {
-          description: `${nome} · ${Math.max(1, Math.round(blob.size / 1024))} KB. Veja os detalhes na janela de diagnóstico.`,
+          description: `${nome} · ${Math.max(1, Math.round(blob.size / 1024))} KB.`,
         });
       } else {
         toast.error(
@@ -1176,6 +1173,7 @@ function LogoUpload({
           {
             description: "Confira o GET e a resposta na janela de diagnóstico.",
             duration: 15000,
+            action: { label: "Ver diagnóstico", onClick: () => setDiagnosticoAberto(true) },
           },
         );
       }
@@ -1194,6 +1192,7 @@ function LogoUpload({
       toast.error("Falha ao enviar ou confirmar o logo", {
         description: error,
         duration: 15000,
+        action: { label: "Ver diagnóstico", onClick: () => setDiagnosticoAberto(true) },
       });
     } finally {
       setEnviando(false);
@@ -1348,7 +1347,7 @@ function LogoUpload({
           {ultimo.texto}
         </span>
       ) : null}
-      {diagnostico && !diagnosticoAberto ? (
+      {diagnostico?.state === "error" && !diagnosticoAberto ? (
         <Button
           variant="outline"
           size="sm"
