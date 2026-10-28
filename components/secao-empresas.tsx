@@ -15,6 +15,8 @@ import { toast } from "sonner";
 import { fetcher, postJson, del, ApiError } from "@/lib/api";
 import type { Empresa, RegimeTributario } from "@/lib/types";
 import { prepararLogo } from "@/lib/preparar-logo";
+import { rastrear, type NivelRastro } from "@/lib/rastro-logo";
+import { RastroLogo } from "./rastro-logo";
 import {
   LogoUploadDiagnosticDialog,
   type LogoUploadDiagnostic,
@@ -675,6 +677,9 @@ export function SecaoEmpresas() {
           </Table>
         </Card>
       )}
+
+      {/* Depuracao: rastreio ao vivo do envio de logo. */}
+      <RastroLogo />
     </div>
   );
 }
@@ -833,6 +838,79 @@ function LogoUpload({
   // Muda a cada upload para forcar o navegador a reobter a imagem (mesma URL).
   const [versao, setVersao] = useState(0);
 
+  // ---- Rastreio (depuracao): cada etapa vai para o painel "Rastreador" e
+  // para o log do servidor do painel. `ultimo` aparece ao lado do botao.
+  const nomeEmpresa = empresa.razaoSocial;
+  const [ultimo, setUltimo] = useState<{ texto: string; nivel: NivelRastro } | null>(null);
+  function passo(etapa: string, detalhe?: string, nivel: NivelRastro = "info") {
+    rastrear(nomeEmpresa, etapa, detalhe, nivel);
+    if (nivel !== "info") setUltimo({ texto: detalhe ? `${etapa}: ${detalhe}` : etapa, nivel });
+  }
+  const descreverArquivo = (f: File) =>
+    `"${f.name}" · ${f.type || "tipo vazio"} · ${(f.size / 1024).toFixed(1)} KB`;
+
+  // Seletor de arquivo: detecta quando ele fecha sem entregar arquivo.
+  const aguardandoArquivo = useRef(false);
+  function abrirSeletor() {
+    const input = inputRef.current;
+    passo(
+      "Clique no botão",
+      `input ${input ? "presente" : "AUSENTE"}${input?.disabled ? " (desabilitado)" : ""}; enviando=${enviando}`,
+    );
+    if (!input) {
+      passo("Seletor não abriu", "O campo de arquivo não existe na página.", "erro");
+      return;
+    }
+    aguardandoArquivo.current = true;
+    const aoVoltar = () => {
+      window.removeEventListener("focus", aoVoltar);
+      setTimeout(() => {
+        if (!aguardandoArquivo.current) return;
+        aguardandoArquivo.current = false;
+        passo(
+          "Seletor fechou sem arquivo",
+          "Nenhum arquivo chegou ao painel (cancelado no seletor, ou o navegador não disparou o evento 'change').",
+          "aviso",
+        );
+      }, 1500);
+    };
+    window.addEventListener("focus", aoVoltar);
+    try {
+      input.click();
+      passo("Seletor de arquivo solicitado ao navegador");
+    } catch (e) {
+      passo("Seletor não abriu", e instanceof Error ? e.message : String(e), "erro");
+    }
+  }
+
+  // Evento nativo 'cancel' do seletor (Chrome 113+, Firefox 91+, Safari 16.4+).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    const aoCancelar = () => {
+      if (!aguardandoArquivo.current) return;
+      aguardandoArquivo.current = false;
+      passo("Seletor cancelado", "O seletor foi fechado sem escolher arquivo (evento 'cancel').", "aviso");
+    };
+    el.addEventListener("cancel", aoCancelar);
+    return () => el.removeEventListener("cancel", aoCancelar);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chaveInput]);
+
+  // Lista de empresas: registra quando o "temLogo" desta empresa muda.
+  const temLogoAnterior = useRef(empresa.temLogo);
+  useEffect(() => {
+    if (temLogoAnterior.current !== empresa.temLogo) {
+      passo(
+        "Lista de empresas atualizada",
+        `temLogo: ${temLogoAnterior.current} → ${empresa.temLogo}`,
+        empresa.temLogo ? "ok" : "aviso",
+      );
+      temLogoAnterior.current = empresa.temLogo;
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [empresa.temLogo]);
+
   // Arrastar e soltar: a celula do logo aceita a imagem solta sobre ela.
   const [arrastando, setArrastando] = useState(false);
   const temArquivo = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
@@ -842,15 +920,25 @@ function LogoUpload({
     e.preventDefault();
     e.stopPropagation();
     setArrastando(false);
-    if (enviando) return;
+    passo(
+      "Arquivo solto na célula",
+      `tipos=[${[...e.dataTransfer.types].join(", ")}] arquivos=${e.dataTransfer.files?.length ?? 0}` +
+        (e.dataTransfer.files?.[0] ? ` · ${descreverArquivo(e.dataTransfer.files[0])}` : ""),
+    );
+    if (enviando) {
+      passo("Ignorado", "Já existe um envio em andamento.", "aviso");
+      return;
+    }
     const arquivo = e.dataTransfer.files?.[0];
     if (!arquivo) {
+      passo("Nada para enviar", "O navegador não entregou arquivo no 'drop' (pasta, link ou arquivo remoto).", "erro");
       toast.error("Nenhum arquivo recebido", {
         description: "Arraste o arquivo de imagem (não a pasta) ou use o botão Enviar logo.",
       });
       return;
     }
     if (arquivo.type && !arquivo.type.startsWith("image/")) {
+      passo("Recusado", `não é imagem: ${descreverArquivo(arquivo)}`, "erro");
       toast.error("O arquivo solto não é uma imagem", {
         description: `${arquivo.name} (${arquivo.type}). Use PNG ou JPEG.`,
       });
@@ -868,9 +956,11 @@ function LogoUpload({
     };
     setDiagnostico({ state: "preparing", requestUrl, originalFile });
     setDiagnosticoAberto(true);
+    passo("Preparando imagem", descreverArquivo(arquivo));
 
     if (arquivo.size > 25 * 1024 * 1024) {
       const error = `Arquivo tem ${(arquivo.size / 1024 / 1024).toFixed(1)} MB; o limite local é 25 MB. Nenhuma requisição foi enviada.`;
+      passo("Recusado", error, "erro");
       setDiagnostico({ state: "error", requestUrl, originalFile, error });
       toast.error("Imagem muito grande", { description: error });
       return;
@@ -888,6 +978,12 @@ function LogoUpload({
         type: blob.type || arquivo.type,
         size: blob.size,
       };
+      passo(
+        "Imagem preparada",
+        `enviando "${nome}" · ${sentFile.type || "tipo vazio"} · ${(blob.size / 1024).toFixed(1)} KB` +
+          (conversionWarning ? ` · conversão falhou, vai o original: ${conversionWarning}` : ""),
+        conversionWarning ? "aviso" : "info",
+      );
       const fd = new FormData();
       fd.append("arquivo", blob, nome);
       setDiagnostico({
@@ -898,6 +994,7 @@ function LogoUpload({
         conversionWarning,
       });
 
+      passo("POST enviado", requestUrl);
       const startedAt = performance.now();
       const response = await fetch(requestUrl, {
         method: "POST",
@@ -917,6 +1014,12 @@ function LogoUpload({
         durationMs: Math.round(performance.now() - startedAt),
         body: formatDiagnosticBody(responseText),
       };
+
+      passo(
+        "Resposta do POST",
+        `HTTP ${response.status} em ${post.durationMs} ms · ${post.contentType ?? "sem content-type"} · ${responseText.slice(0, 300) || "(corpo vazio)"}`,
+        response.ok ? "ok" : "erro",
+      );
 
       if (!response.ok) {
         const error =
@@ -977,6 +1080,11 @@ function LogoUpload({
           : "A resposta do GET não contém uma imagem gravada.",
       };
 
+      passo(
+        "Conferência (GET do logo)",
+        `HTTP ${verificationResponse.status} · ${contentType ?? "sem content-type"} · ${image.size} bytes`,
+        confirmed ? "ok" : "erro",
+      );
       setDiagnostico({
         state: confirmed ? "success" : "error",
         requestUrl,
@@ -990,7 +1098,9 @@ function LogoUpload({
           : "POST aceito, mas a leitura imediata não confirmou a gravação.",
       });
       setVersao((v) => v + 1);
+      passo("Recarregando a lista de empresas");
       onMudou();
+      passo(confirmed ? "Concluído" : "Concluído com erro", confirmed ? "logo gravado e lido de volta" : "o GET não devolveu a imagem", confirmed ? "ok" : "erro");
       if (confirmed) {
         toast.success("Logo enviado e confirmado no servidor", {
           description: `${nome} · ${Math.max(1, Math.round(blob.size / 1024))} KB. Veja os detalhes na janela de diagnóstico.`,
@@ -1006,6 +1116,7 @@ function LogoUpload({
       }
     } catch (erro) {
       const error = erro instanceof Error ? erro.message : String(erro);
+      passo("Falha de rede ou exceção", error, "erro");
       setDiagnostico((atual) =>
         atual
           ? {
@@ -1025,12 +1136,14 @@ function LogoUpload({
   }
 
   async function remover() {
+    passo("Remover logo");
     setEnviando(true);
     try {
       const resp = await fetch(`/api/proxy/empresas/${empresa.id}/logo`, {
         method: "DELETE",
       });
       if (!resp.ok) throw new Error(`Erro ${resp.status}`);
+      passo("Logo removido", `HTTP ${resp.status}`, "ok");
       onMudou();
       toast.success("Logo removido");
     } catch (e) {
@@ -1048,7 +1161,9 @@ function LogoUpload({
         arrastando ? "bg-primary/10 ring-2 ring-primary" : ""
       }`}
       onDragEnter={(e) => {
-        if (temArquivo(e)) setArrastando(true);
+        if (!temArquivo(e)) return;
+        if (!arrastando) passo("Arrastando sobre a célula", `tipos=[${[...e.dataTransfer.types].join(", ")}]`);
+        setArrastando(true);
       }}
       onDragOver={(e) => {
         if (!temArquivo(e)) return;
@@ -1072,6 +1187,17 @@ function LogoUpload({
             src={`/api/proxy/empresas/${empresa.id}/logo?v=${versao}`}
             alt={`Logo de ${empresa.razaoSocial}`}
             className="h-7 w-auto max-w-16 rounded border border-border bg-card object-contain"
+            onLoad={(e) =>
+              versao > 0 &&
+              passo(
+                "Imagem exibida na célula",
+                `${e.currentTarget.naturalWidth}x${e.currentTarget.naturalHeight} px`,
+                "ok",
+              )
+            }
+            onError={() =>
+              passo("Imagem NÃO carregou na célula", `GET /api/proxy/empresas/${empresa.id}/logo falhou`, "erro")
+            }
           />
           <Button
             variant="ghost"
@@ -1098,8 +1224,13 @@ function LogoUpload({
         tabIndex={-1}
         aria-hidden
         onChange={(event) => {
+          aguardandoArquivo.current = false;
           const arquivo = event.currentTarget.files?.[0];
-          if (!arquivo) return;
+          if (!arquivo) {
+            passo("Evento 'change' sem arquivo", `files=${event.currentTarget.files?.length ?? "null"}`, "aviso");
+            return;
+          }
+          passo("Arquivo escolhido no seletor", descreverArquivo(arquivo));
           setNomeArquivoSelecionado(arquivo.name);
           setChaveInput((chave) => chave + 1);
           void enviar(arquivo);
@@ -1111,13 +1242,27 @@ function LogoUpload({
         size="sm"
         className="shrink-0"
         disabled={enviando}
-        onClick={() => inputRef.current?.click()}
+        onClick={abrirSeletor}
         aria-label={`${empresa.temLogo ? "Trocar" : "Enviar"} logo de ${empresa.razaoSocial}`}
         title={nomeArquivoSelecionado ? `Último arquivo: ${nomeArquivoSelecionado}` : undefined}
       >
         {enviando ? <Spinner data-icon="inline-start" /> : <ImageUp data-icon="inline-start" />}
         {enviando ? "Enviando…" : empresa.temLogo ? "Trocar" : "Enviar logo"}
       </Button>
+      {ultimo ? (
+        <span
+          className={`max-w-56 truncate text-xs ${
+            ultimo.nivel === "ok"
+              ? "text-emerald-600 dark:text-emerald-400"
+              : ultimo.nivel === "erro"
+                ? "text-destructive"
+                : "text-amber-600 dark:text-amber-400"
+          }`}
+          title={ultimo.texto}
+        >
+          {ultimo.texto}
+        </span>
+      ) : null}
       {diagnostico && !diagnosticoAberto ? (
         <Button
           variant="outline"
