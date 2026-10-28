@@ -1,7 +1,7 @@
 "use client";
 
 import useSWR from "swr";
-import { useId, useRef, useState } from "react";
+import { useEffect, useId, useRef, useState } from "react";
 import {
   Plus,
   Search,
@@ -128,6 +128,21 @@ async function lookup(path: string) {
 }
 
 export function SecaoEmpresas() {
+  // Soltar um arquivo fora da area do logo faria o navegador SAIR do painel
+  // para abrir a imagem. Bloqueia o comportamento padrao enquanto a tela esta
+  // aberta; quem trata o arquivo e a area de logo de cada empresa.
+  useEffect(() => {
+    const bloquear = (e: DragEvent) => {
+      if (e.dataTransfer?.types.includes("Files")) e.preventDefault();
+    };
+    window.addEventListener("dragover", bloquear);
+    window.addEventListener("drop", bloquear);
+    return () => {
+      window.removeEventListener("dragover", bloquear);
+      window.removeEventListener("drop", bloquear);
+    };
+  }, []);
+
   const { data, error, isLoading, mutate } = useSWR<Empresa[]>(
     "empresas",
     fetcher,
@@ -818,6 +833,33 @@ function LogoUpload({
   // Muda a cada upload para forcar o navegador a reobter a imagem (mesma URL).
   const [versao, setVersao] = useState(0);
 
+  // Arrastar e soltar: a celula do logo aceita a imagem solta sobre ela.
+  const [arrastando, setArrastando] = useState(false);
+  const temArquivo = (e: React.DragEvent) => e.dataTransfer.types.includes("Files");
+
+  function soltar(e: React.DragEvent) {
+    if (!temArquivo(e)) return;
+    e.preventDefault();
+    e.stopPropagation();
+    setArrastando(false);
+    if (enviando) return;
+    const arquivo = e.dataTransfer.files?.[0];
+    if (!arquivo) {
+      toast.error("Nenhum arquivo recebido", {
+        description: "Arraste o arquivo de imagem (não a pasta) ou use o botão Enviar logo.",
+      });
+      return;
+    }
+    if (arquivo.type && !arquivo.type.startsWith("image/")) {
+      toast.error("O arquivo solto não é uma imagem", {
+        description: `${arquivo.name} (${arquivo.type}). Use PNG ou JPEG.`,
+      });
+      return;
+    }
+    setNomeArquivoSelecionado(arquivo.name);
+    void enviar(arquivo);
+  }
+
   async function enviar(arquivo: File) {
     const originalFile = {
       name: arquivo.name,
@@ -1001,8 +1043,30 @@ function LogoUpload({
   }
 
   return (
-    <div className="flex min-w-max items-center gap-2">
-      {empresa.temLogo ? (
+    <div
+      className={`-m-1 flex min-w-max items-center gap-2 rounded-md p-1 transition-colors ${
+        arrastando ? "bg-primary/10 ring-2 ring-primary" : ""
+      }`}
+      onDragEnter={(e) => {
+        if (temArquivo(e)) setArrastando(true);
+      }}
+      onDragOver={(e) => {
+        if (!temArquivo(e)) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "copy";
+        if (!arrastando) setArrastando(true);
+      }}
+      onDragLeave={(e) => {
+        // So desliga ao sair da celula, nao ao passar sobre um filho dela.
+        if (!e.currentTarget.contains(e.relatedTarget as Node | null)) setArrastando(false);
+      }}
+      onDrop={soltar}
+      title="Clique em Enviar logo ou arraste a imagem para cá"
+    >
+      {arrastando ? (
+        <span className="px-2 text-xs font-medium text-primary">Solte a imagem aqui</span>
+      ) : null}
+      {!arrastando && empresa.temLogo ? (
         <>
           <img
             src={`/api/proxy/empresas/${empresa.id}/logo?v=${versao}`}
