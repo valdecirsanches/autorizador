@@ -1,0 +1,120 @@
+{
+  "_type": "export",
+  "__export_format": 4,
+  "__export_source": "v0.autorizador-nfe",
+  "resources": [
+    {
+      "_id": "wrk_nfe",
+      "_type": "workspace",
+      "name": "Autorizador NF-e",
+      "description": "Colecao de testes de emissao de NF-e. Importe em Insomnia > Create > Import from File."
+    },
+    {
+      "_id": "env_base",
+      "_type": "environment",
+      "parentId": "wrk_nfe",
+      "name": "Base",
+      "data": {
+        "base_url": "http://127.0.0.1:5240",
+        "cnpj": "11222333000181",
+        "ambiente": "2",
+        "empresa_id": "cole-aqui-o-id-retornado-pela-busca-por-cnpj",
+        "documento_id": "cole-aqui-o-id-retornado-pela-emissao"
+      }
+    },
+    {
+      "_id": "fld_setup",
+      "_type": "request_group",
+      "parentId": "wrk_nfe",
+      "name": "1. Descoberta",
+      "metaSortKey": -100
+    },
+    {
+      "_id": "req_health",
+      "_type": "request",
+      "parentId": "fld_setup",
+      "name": "Health check",
+      "method": "GET",
+      "url": "{{ _.base_url }}/health",
+      "metaSortKey": -100
+    },
+    {
+      "_id": "req_por_cnpj",
+      "_type": "request",
+      "parentId": "fld_setup",
+      "name": "Resolver empresa por CNPJ (copie o id)",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/empresas/por-cnpj/{{ _.cnpj }}",
+      "description": "Retorna o objeto da empresa. Copie o campo id para a variavel de ambiente empresa_id.",
+      "metaSortKey": -90
+    },
+    {
+      "_id": "req_lista_empresas",
+      "_type": "request",
+      "parentId": "fld_setup",
+      "name": "Listar todas as empresas",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/empresas/",
+      "metaSortKey": -80
+    },
+    {
+      "_id": "fld_emissao",
+      "_type": "request_group",
+      "parentId": "wrk_nfe",
+      "name": "2. Emissao",
+      "metaSortKey": -50
+    },
+    {
+      "_id": "req_emitir",
+      "_type": "request",
+      "parentId": "fld_emissao",
+      "name": "Emitir NF-e",
+      "method": "POST",
+      "url": "{{ _.base_url }}/api/empresas/{{ _.empresa_id }}/nfe",
+      "body": {
+        "mimeType": "application/json",
+        "text": "{\n  \"configuracao\": { \"ambiente\": {{ _.ambiente }}, \"contingencia\": false },\n  \"emitente\": {\n    \"cnpj\": \"{{ _.cnpj }}\",\n    \"razaoSocial\": \"EMPRESA EXEMPLO LTDA\",\n    \"inscricaoEstadual\": \"123456789\",\n    \"regimeTributario\": 3,\n    \"logradouro\": \"Rua Exemplo\",\n    \"numero\": \"100\",\n    \"bairro\": \"Centro\",\n    \"codigoMunicipio\": \"3550308\",\n    \"nomeMunicipio\": \"Sao Paulo\",\n    \"uf\": \"SP\",\n    \"cep\": \"01001000\"\n  },\n  \"serie\": 1,\n  \"naturezaOperacao\": \"VENDA DE MERCADORIA\",\n  \"consumidorFinal\": true,\n  \"indicadorPresenca\": 1,\n  \"destinatario\": {\n    \"documento\": \"11144477735\",\n    \"nome\": \"CONSUMIDOR FINAL\",\n    \"uf\": \"SP\"\n  },\n  \"itens\": [\n    {\n      \"codigo\": \"PROD-001\",\n      \"descricao\": \"PRODUTO DE TESTE\",\n      \"ncm\": \"22030000\",\n      \"cfop\": \"5102\",\n      \"unidadeComercial\": \"UN\",\n      \"quantidade\": 1,\n      \"valorUnitario\": 10.00,\n      \"valorBruto\": 10.00,\n      \"origemMercadoria\": 0,\n      \"cstIcms\": \"102\"\n    }\n  ],\n  \"pagamentos\": [\n    { \"meio\": \"01\", \"valor\": 10.00 }\n  ]\n}"
+      },
+      "headers": [
+        { "name": "Content-Type", "value": "application/json" },
+        { "name": "Idempotency-Key", "value": "insomnia-teste-001" }
+      ],
+      "description": "200 = autorizada, 422 = rejeitada pela SEFAZ, 404 = empresa nao existe. Copie o id da resposta para documento_id.",
+      "metaSortKey": -50
+    },
+    {
+      "_id": "fld_consulta",
+      "_type": "request_group",
+      "parentId": "wrk_nfe",
+      "name": "3. Consulta",
+      "metaSortKey": 0
+    },
+    {
+      "_id": "req_lista_docs",
+      "_type": "request",
+      "parentId": "fld_consulta",
+      "name": "Listar documentos da empresa",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/empresas/{{ _.empresa_id }}/nfe",
+      "metaSortKey": 0
+    },
+    {
+      "_id": "req_detalhe_doc",
+      "_type": "request",
+      "parentId": "fld_consulta",
+      "name": "Detalhe do documento + eventos",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/nfe/{{ _.documento_id }}",
+      "metaSortKey": 10
+    },
+    {
+      "_id": "req_xml_doc",
+      "_type": "request",
+      "parentId": "fld_consulta",
+      "name": "Baixar XML autorizado",
+      "method": "GET",
+      "url": "{{ _.base_url }}/api/nfe/{{ _.documento_id }}/xml",
+      "metaSortKey": 20
+    }
+  ]
+}

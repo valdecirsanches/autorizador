@@ -1,0 +1,36 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\NFe.Domain\NFe.Domain.csproj" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- O catalogo precisa acompanhar o assembly para ser lido em runtime. -->
+    <None Update="Endpoints\sefaz-endpoints.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+    <!-- Cadeia de ACs da ICP-Brasil (raizes + intermediarias) embutida no
+         assembly, para validar o certificado do servidor da SEFAZ sem depender
+         do trust store do sistema operacional. -->
+    <EmbeddedResource Include="Certificados\icp-brasil-bundle.pem" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <PackageReference Include="QuestPDF" Version="2026.7.2" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Permite testar helpers internos (ex.: ParseDataHora) sem inflar a API
+         publica do assembly. -->
+    <InternalsVisibleTo Include="NFe.Tests" />
+  </ItemGroup>
+
+</Project>

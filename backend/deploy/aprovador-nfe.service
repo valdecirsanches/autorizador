@@ -1,0 +1,50 @@
+# =====================================================================
+# Servico systemd da API NFe (aprovador).
+#
+# NAO edite este arquivo direto em /etc. Ele e instalado por
+# `backend/deploy/instalar-servico.sh`, que substitui os caminhos e o
+# usuario conforme o seu ambiente. Este e o modelo versionado.
+#
+# Placeholders substituidos pelo instalador:
+#   __DOTNET__   -> caminho do dotnet (ex.: /usr/bin/dotnet)
+#   __APPDIR__   -> pasta com o app publicado (ex.: /opt/aprovador-nfe)
+#   __USER__     -> usuario que roda o servico (ex.: ubuntu)
+#   __ENVFILE__  -> arquivo de variaveis de ambiente
+# =====================================================================
+[Unit]
+Description=API NFe (aprovador)
+After=network.target mysql.service
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=__USER__
+WorkingDirectory=__APPDIR__
+
+# Executa o DLL publicado DIRETAMENTE. Isto e o que elimina de vez o erro
+# "The application to execute does not exist: .../c3ab8ff...": o `dotnet run`
+# resolvia o nome do executavel a partir do cache obj/; aqui nao ha cache nem
+# resolucao de nome — apontamos para o DLL final.
+ExecStart=__DOTNET__ __APPDIR__/NFe.Api.dll --urls http://127.0.0.1:5240
+
+# Variaveis de ambiente (connection string, master key, CORS...).
+EnvironmentFile=__ENVFILE__
+Environment=ASPNETCORE_ENVIRONMENT=Production
+Environment=DOTNET_CLI_TELEMETRY_OPTOUT=1
+
+# Reinicia sozinho em caso de falha e no boot.
+Restart=always
+RestartSec=5
+
+# Logs vao para o journald (veja com: journalctl -u aprovador-nfe -f).
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=aprovador-nfe
+
+# Endurecimento basico.
+NoNewPrivileges=true
+ProtectSystem=full
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,34 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <!--
+    Modulo NFS-e (Padrao Nacional + esqueleto ABRASF). Projeto separado para que
+    o fluxo de NF-e (NFe.Sefaz) permaneca intocado: daqui so REUTILIZAMOS o
+    AssinadorXml e o TrustStoreIcpBrasil, sem alterar nada la.
+  -->
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\NFe.Domain\NFe.Domain.csproj" />
+    <ProjectReference Include="..\NFe.Sefaz\NFe.Sefaz.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Logging.Abstractions" Version="9.0.0" />
+    <PackageReference Include="QuestPDF" Version="2026.7.2" />
+    <PackageReference Include="System.Security.Cryptography.Xml" Version="9.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <EmbeddedResource Include="Municipios\ACBrNFSeXServicos.ini" LogicalName="ACBrNFSeXServicos.ini" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <InternalsVisibleTo Include="NFe.Tests" />
+  </ItemGroup>
+
+</Project>

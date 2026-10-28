@@ -1,0 +1,30 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <ItemGroup>
+    <ProjectReference Include="..\NFe.Domain\NFe.Domain.csproj" />
+    <ProjectReference Include="..\NFe.Sefaz\NFe.Sefaz.csproj" />
+    <ProjectReference Include="..\NFe.Nfse\NFe.Nfse.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Permite testar o mapeamento interno (AplicarResultado) sem torna-lo
+         parte da API publica do assembly. -->
+    <InternalsVisibleTo Include="NFe.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="9.0.0">
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+      <PrivateAssets>all</PrivateAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Relational" Version="9.0.0" />
+    <PackageReference Include="Pomelo.EntityFrameworkCore.MySql" Version="9.0.0" />
+  </ItemGroup>
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+
+</Project>
