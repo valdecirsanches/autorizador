@@ -43,6 +43,13 @@ const nextConfig = {
     NEXT_PUBLIC_APP_VERSION: versao,
     NEXT_PUBLIC_APP_COMMIT: hash,
     NEXT_PUBLIC_APP_BUILD_DATE: new Date().toISOString(),
+    // Data do build ja formatada no horario de Brasilia, para exibir igual no
+    // servidor e no navegador (sem diferenca de fuso na hidratacao).
+    NEXT_PUBLIC_APP_BUILD_LABEL: new Intl.DateTimeFormat("pt-BR", {
+      dateStyle: "short",
+      timeStyle: "short",
+      timeZone: "America/Sao_Paulo",
+    }).format(new Date()),
   },
 }
 

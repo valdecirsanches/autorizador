@@ -121,6 +121,12 @@ function FormularioLogin() {
           Suas credenciais são verificadas no servidor. A sessão expira automaticamente após um
           período de inatividade.
         </p>
+
+        {/* Versao gravada no build: confere o deploy sem precisar logar.
+            Do servidor: curl -s http://127.0.0.1:5241/login | grep -o "Painel v[0-9.]*" */}
+        <p className="mt-4 text-center font-mono text-xs text-muted-foreground" data-versao-painel>
+          {`Painel v${process.env.NEXT_PUBLIC_APP_VERSION} · build ${process.env.NEXT_PUBLIC_APP_BUILD_LABEL}`}
+        </p>
       </div>
     </main>
   )

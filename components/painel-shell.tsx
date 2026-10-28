@@ -157,8 +157,15 @@ export function PainelShell() {
       <div className="flex min-w-0 flex-1 flex-col">
         <header className="flex flex-col gap-3 border-b border-border bg-card px-6 py-4 sm:flex-row sm:items-center sm:justify-between">
           <div className="flex flex-col gap-0.5">
-            <h1 className="text-lg font-semibold tracking-tight">
+            <h1 className="flex items-center gap-2 text-lg font-semibold tracking-tight">
               {nav.find((n) => n.id === secao)?.label}
+              {/* Versao do build sempre visivel, sem depender da API. */}
+              <span
+                className="rounded-md border border-border px-1.5 py-0.5 font-mono text-[11px] font-normal text-muted-foreground"
+                title={`Painel v${process.env.NEXT_PUBLIC_APP_VERSION} · build ${process.env.NEXT_PUBLIC_APP_BUILD_LABEL}`}
+              >
+                v{process.env.NEXT_PUBLIC_APP_VERSION}
+              </span>
             </h1>
             <p className="text-sm text-muted-foreground">
               {nav.find((n) => n.id === secao)?.hint}

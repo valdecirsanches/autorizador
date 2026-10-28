@@ -14,7 +14,7 @@ const geistMono = Geist_Mono({
 })
 
 export const metadata: Metadata = {
-  title: 'Autorizador NF-e | Painel',
+  title: `Autorizador NF-e v${process.env.NEXT_PUBLIC_APP_VERSION} | Painel`,
   description:
     'Painel de operação do autorizador de NF-e: status dos serviços da SEFAZ por UF, empresas emitentes e certificados digitais A1.',
 }
