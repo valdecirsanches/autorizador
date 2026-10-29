@@ -6,7 +6,7 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <!-- Versao exibida no painel (GET /health). Suba a cada entrega:
          MAIOR = quebra de contrato, MENOR = recurso novo, PATCH = correcao. -->
-    <Version>1.1.2</Version>
+    <Version>1.1.3</Version>
   </PropertyGroup>
 
   <ItemGroup>

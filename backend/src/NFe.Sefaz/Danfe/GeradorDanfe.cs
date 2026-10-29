@@ -12,8 +12,12 @@ namespace NFe.Sefaz.Danfe;
 /// </summary>
 public static class GeradorDanfe
 {
-    private const float Rotulo = 5f;   // fonte dos rotulos (labels) das celulas
-    private const float Valor = 7.5f;  // fonte dos valores
+    private const float Rotulo = 5.6f; // fonte dos rotulos (labels) das celulas
+    private const float Valor = 8.5f;  // fonte dos valores
+    // Margens: laterais maiores para caber com folga na area imprimivel do A4
+    // (impressoras comuns perdem ~5mm de cada lado).
+    private const float MargemLateral = 26f;
+    private const float MargemVertical = 18f;
     private const float Linha = 0.6f;  // espessura das bordas do grid
     private static readonly Color Cinza = Colors.Grey.Lighten3;
     private static readonly Color CinzaRotulo = Colors.Grey.Darken1;
@@ -56,7 +60,8 @@ public static class GeradorDanfe
             container.Page(page =>
             {
                 page.Size(paisagem ? PageSizes.A4.Landscape() : PageSizes.A4);
-                page.Margin(16);
+                page.MarginHorizontal(MargemLateral);
+                page.MarginVertical(MargemVertical);
                 page.DefaultTextStyle(x => x.FontSize(Valor).FontFamily(Fonts.Arial).LineHeight(1f));
 
                 // Carimbo diagonal (ex.: nota cancelada). Desenhado por cima do
@@ -91,16 +96,16 @@ public static class GeradorDanfe
 
     // ---- Marca d'agua (carimbo diagonal) -----------------------------------
 
-    // Area de conteudo = A4 (595.28 x 841.89 pt) menos as margens de 16pt.
+    // Area de conteudo = A4 (595.28 x 841.89 pt) menos as margens.
     // Usada para centralizar o carimbo com a receita translate/rotate/translate.
     // Em paisagem largura e altura se invertem.
-    private const float LadoCurto = 595.28f - 32f;
-    private const float LadoLongo = 841.89f - 32f;
+    private const float A4Curto = 595.28f;
+    private const float A4Longo = 841.89f;
 
     private static void MarcaDagua(IContainer container, string texto, bool paisagem)
     {
-        var largura = paisagem ? LadoLongo : LadoCurto;
-        var altura = paisagem ? LadoCurto : LadoLongo;
+        var largura = (paisagem ? A4Longo : A4Curto) - 2 * MargemLateral;
+        var altura = (paisagem ? A4Curto : A4Longo) - 2 * MargemVertical;
 
         // Rotaciona em torno do CENTRO da area: translada ate o centro, gira -45,
         // translada de volta, e entao centraliza o texto na area resultante.
@@ -126,9 +131,9 @@ public static class GeradorDanfe
                 {
                     c.Item().Text(t =>
                     {
-                        t.Span("RECEBEMOS DE ").FontSize(5.5f);
-                        t.Span(d.Emitente.Nome).FontSize(5.5f).Bold();
-                        t.Span(" OS PRODUTOS / SERVICOS CONSTANTES DA NOTA FISCAL ELETRONICA INDICADA AO LADO").FontSize(5.5f);
+                        t.Span("RECEBEMOS DE ").FontSize(6.5f);
+                        t.Span(d.Emitente.Nome).FontSize(6.5f).Bold();
+                        t.Span(" OS PRODUTOS / SERVICOS CONSTANTES DA NOTA FISCAL ELETRONICA INDICADA AO LADO").FontSize(6.5f);
                     });
                     c.Item().PaddingTop(6).Row(r =>
                     {
@@ -144,11 +149,11 @@ public static class GeradorDanfe
                         });
                     });
                 });
-                row.ConstantItem(78).BorderLeft(Linha).AlignMiddle().AlignCenter().Column(c =>
+                row.ConstantItem(84).BorderLeft(Linha).AlignMiddle().AlignCenter().Column(c =>
                 {
-                    c.Item().AlignCenter().Text("NF-e").Bold().FontSize(13);
-                    c.Item().AlignCenter().Text($"No. {DanfeDados.FormatarNumero(d.Numero)}").FontSize(6.5f);
-                    c.Item().AlignCenter().Text($"SERIE {Serie(d)}").FontSize(6.5f);
+                    c.Item().AlignCenter().Text("NF-e").Bold().FontSize(14);
+                    c.Item().AlignCenter().Text($"No. {DanfeDados.FormatarNumero(d.Numero)}").FontSize(7.5f).Bold();
+                    c.Item().AlignCenter().Text($"SERIE {Serie(d)}").FontSize(7.5f);
                 });
             });
             col.Item().PaddingVertical(1).Text("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
@@ -174,33 +179,33 @@ public static class GeradorDanfe
                         c.Item().PaddingTop(3).Height(34).AlignCenter().AlignMiddle()
                             .Image(d.Logo).FitHeight();
                     }
-                    c.Item().PaddingTop(3).AlignCenter().Text(d.Emitente.Nome).Bold().FontSize(9);
+                    c.Item().PaddingTop(3).AlignCenter().Text(d.Emitente.Nome).Bold().FontSize(10);
                     var end = d.Emitente.Endereco;
-                    c.Item().AlignCenter().Text($"{end.Logradouro}, {end.Numero}  {end.Bairro}".Trim()).FontSize(6.5f);
-                    c.Item().AlignCenter().Text($"CEP: {DanfeDados.FormatarCep(end.Cep)} - {end.Municipio} - {end.Uf}").FontSize(6.5f);
+                    c.Item().AlignCenter().Text($"{end.Logradouro}, {end.Numero}  {end.Bairro}".Trim()).FontSize(7.5f);
+                    c.Item().AlignCenter().Text($"CEP: {DanfeDados.FormatarCep(end.Cep)} - {end.Municipio} - {end.Uf}").FontSize(7.5f);
                     if (!string.IsNullOrWhiteSpace(end.Fone))
-                        c.Item().AlignCenter().Text($"TEL: {end.Fone}").FontSize(6.5f);
+                        c.Item().AlignCenter().Text($"TEL: {end.Fone}").FontSize(7.5f);
                 });
 
                 // DANFE + tipo de operacao + numero + serie
                 row.RelativeItem(26).BorderLeft(Linha).Padding(4).Column(c =>
                 {
-                    c.Item().AlignCenter().Text("DANFE").Bold().FontSize(12);
-                    c.Item().AlignCenter().Text("DOCUMENTO AUXILIAR DA").FontSize(5.5f);
-                    c.Item().AlignCenter().Text("NOTA FISCAL ELETRONICA").FontSize(5.5f);
+                    c.Item().AlignCenter().Text("DANFE").Bold().FontSize(14);
+                    c.Item().AlignCenter().Text("DOCUMENTO AUXILIAR DA").FontSize(6.5f);
+                    c.Item().AlignCenter().Text("NOTA FISCAL ELETRONICA").FontSize(6.5f);
                     c.Item().PaddingTop(4).Row(r =>
                     {
                         r.RelativeItem().AlignMiddle().Text(t =>
                         {
-                            t.Line("0 - ENTRADA").FontSize(6);
-                            t.Line("1 - SAIDA").FontSize(6);
+                            t.Line("0 - ENTRADA").FontSize(7);
+                            t.Line("1 - SAIDA").FontSize(7);
                         });
                         r.ConstantItem(22).Border(Linha).AlignMiddle().AlignCenter()
-                            .Text(d.TipoOperacao).Bold().FontSize(12);
+                            .Text(d.TipoOperacao).Bold().FontSize(13);
                     });
-                    c.Item().PaddingTop(4).AlignCenter().Text($"No. {DanfeDados.FormatarNumero(d.Numero)}").Bold().FontSize(9);
-                    c.Item().AlignCenter().Text("FL. 1/1").FontSize(6.5f);
-                    c.Item().AlignCenter().Text($"SERIE {Serie(d)}").Bold().FontSize(7.5f);
+                    c.Item().PaddingTop(4).AlignCenter().Text($"No. {DanfeDados.FormatarNumero(d.Numero)}").Bold().FontSize(10.5f);
+                    c.Item().AlignCenter().Text("FL. 1/1").FontSize(7.5f);
+                    c.Item().AlignCenter().Text($"SERIE {Serie(d)}").Bold().FontSize(8.5f);
                 });
 
                 // Barcode + chave + consulta
@@ -214,10 +219,10 @@ public static class GeradorDanfe
                         .MaxWidth(LarguraSvg(barras))
                         .Svg(barras);
                     c.Item().PaddingTop(3).Text("CHAVE DE ACESSO").FontSize(Rotulo).FontColor(CinzaRotulo);
-                    c.Item().AlignCenter().Text(DanfeDados.FormatarChave(d.Chave)).FontSize(7.5f).Bold();
+                    c.Item().AlignCenter().Text(DanfeDados.FormatarChave(d.Chave)).FontSize(8f).Bold();
                     c.Item().PaddingTop(4).AlignCenter().Text(
                         "Consulta de autenticidade no portal nacional da NF-e\nwww.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora")
-                        .FontSize(5.5f);
+                        .FontSize(6.5f);
                 });
             });
         });
@@ -242,7 +247,7 @@ public static class GeradorDanfe
             if (d.Homologacao)
                 col.Item().PaddingBottom(2).Border(Linha).Background(Colors.Grey.Lighten2)
                     .Padding(3).AlignCenter()
-                    .Text("AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL").Bold().FontSize(9);
+                    .Text("AMBIENTE DE HOMOLOGACAO - SEM VALOR FISCAL").Bold().FontSize(10);
 
             col.Item().Border(Linha).Row(row =>
             {
@@ -416,16 +421,16 @@ public static class GeradorDanfe
                 {
                     cols.ConstantColumn(34); // codigo
                     cols.RelativeColumn();   // descricao
-                    cols.ConstantColumn(36); // ncm
-                    cols.ConstantColumn(18); // cst
+                    cols.ConstantColumn(38); // ncm
+                    cols.ConstantColumn(19); // cst
                     cols.ConstantColumn(22); // cfop
-                    cols.ConstantColumn(18); // un
-                    cols.ConstantColumn(34); // quant
-                    cols.ConstantColumn(36); // vl unit
-                    cols.ConstantColumn(40); // vl total
-                    cols.ConstantColumn(30); // desconto
-                    cols.ConstantColumn(38); // bc icms
-                    cols.ConstantColumn(34); // vl icms
+                    cols.ConstantColumn(20); // un
+                    cols.ConstantColumn(40); // quant
+                    cols.ConstantColumn(40); // vl unit
+                    cols.ConstantColumn(42); // vl total
+                    cols.ConstantColumn(32); // desconto
+                    cols.ConstantColumn(42); // bc icms
+                    cols.ConstantColumn(38); // vl icms
                     cols.ConstantColumn(26); // aliq icms
                     cols.ConstantColumn(24); // aliq ipi
                 });
@@ -479,12 +484,12 @@ public static class GeradorDanfe
                 row.RelativeItem(6).Padding(4).Column(c =>
                 {
                     c.Item().Text("INFORMACOES COMPLEMENTARES").FontSize(Rotulo).FontColor(CinzaRotulo);
-                    c.Item().PaddingTop(2).Text(d.InformacoesComplementares).FontSize(6.5f);
+                    c.Item().PaddingTop(2).Text(d.InformacoesComplementares).FontSize(7.5f);
                 });
                 row.RelativeItem(4).BorderLeft(Linha).Padding(4).Column(c =>
                 {
                     c.Item().Text("RESERVADO AO FISCO").FontSize(Rotulo).FontColor(CinzaRotulo);
-                    c.Item().PaddingTop(2).Text(d.ReservadoFisco).FontSize(6.5f);
+                    c.Item().PaddingTop(2).Text(d.ReservadoFisco).FontSize(7.5f);
                 });
             });
         });
@@ -494,7 +499,7 @@ public static class GeradorDanfe
 
     /// <summary>Titulo de secao: faixa fina em negrito, colada ao grid abaixo.</summary>
     private static void Titulo(ColumnDescriptor col, string texto)
-        => col.Item().PaddingTop(1).Text(texto).Bold().FontSize(6);
+        => col.Item().PaddingTop(1).Text(texto).Bold().FontSize(7);
 
     /// <summary>Celula rotulada: rotulo pequeno no topo e valor em negrito abaixo.</summary>
     private static void Campo(IContainer container, string rotulo, string valor,
@@ -505,7 +510,7 @@ public static class GeradorDanfe
             c.Item().Text(rotulo).FontSize(Rotulo).FontColor(CinzaRotulo);
             var linhaValor = direita ? c.Item().AlignRight() : c.Item();
             linhaValor.Text(string.IsNullOrWhiteSpace(valor) ? " " : valor)
-                .FontSize(destaque ? 9f : Valor).Bold();
+                .FontSize(destaque ? 10.5f : Valor).Bold();
         });
     }
 
@@ -513,7 +518,7 @@ public static class GeradorDanfe
     {
         var cell = container.Background(Cinza).Border(0.4f).Padding(2);
         if (!esquerda) cell = cell.AlignCenter();
-        cell.Text(texto).FontSize(5f).Bold();
+        cell.Text(texto).FontSize(5.8f).Bold();
     }
 
     private static void Cel(IContainer container, string texto, bool esquerda = false, bool direita = false)
@@ -521,7 +526,7 @@ public static class GeradorDanfe
         var cell = container.Border(0.4f).Padding(2);
         if (direita) cell = cell.AlignRight();
         else if (!esquerda) cell = cell.AlignCenter();
-        cell.Text(string.IsNullOrWhiteSpace(texto) ? " " : texto).FontSize(5.8f);
+        cell.Text(string.IsNullOrWhiteSpace(texto) ? " " : texto).FontSize(7f);
     }
 
     /// <summary>Largura natural (atributo width) do SVG gerado por <see cref="Code128"/>.</summary>
