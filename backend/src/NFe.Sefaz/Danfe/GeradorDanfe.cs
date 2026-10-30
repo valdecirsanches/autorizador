@@ -70,6 +70,9 @@ public static class GeradorDanfe
                     page.Foreground().Element(e => MarcaDagua(e, marcaDagua, paisagem));
 
                 page.Content().Element(e => Conteudo(e, d));
+
+                // Canhoto de recebimento (data e assinatura) no pe da primeira folha.
+                page.Footer().ShowOnce().Element(e => Canhoto(e, d));
             });
         }).GeneratePdf();
     }
@@ -80,7 +83,6 @@ public static class GeradorDanfe
         container.Column(col =>
         {
             col.Spacing(3);
-            col.Item().Element(e => Canhoto(e, d));
             col.Item().Element(e => Cabecalho(e, d));
             col.Item().Element(e => NaturezaProtocolo(e, d));
             col.Item().Element(e => InscricoesEmitente(e, d));
@@ -119,12 +121,15 @@ public static class GeradorDanfe
             .FontColor("30C0392B"); // vermelho translucido (alfa 0x30)
     }
 
-    // ---- Canhoto de recebimento (tesoura) ----------------------------------
+    // ---- Canhoto de recebimento (rodape da 1a folha) ------------------------
 
     private static void Canhoto(IContainer container, DanfeDados d)
     {
         container.Column(col =>
         {
+            // Linha de corte acima do canhoto (destacado na parte de baixo da folha).
+            col.Item().PaddingTop(4).PaddingBottom(1).Text("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
+                .FontSize(5).FontColor(Colors.Grey.Medium);
             col.Item().Border(Linha).Row(row =>
             {
                 row.RelativeItem().Padding(3).Column(c =>
@@ -156,8 +161,6 @@ public static class GeradorDanfe
                     c.Item().AlignCenter().Text($"SERIE {Serie(d)}").FontSize(6.5f);
                 });
             });
-            col.Item().PaddingVertical(1).Text("- - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - - -")
-                .FontSize(5).FontColor(Colors.Grey.Medium);
         });
     }
 
