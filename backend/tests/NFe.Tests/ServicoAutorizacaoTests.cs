@@ -185,4 +185,18 @@ public class ServicoAutorizacaoTests
         Assert.Contains("999", doc.MotivoRetorno);
         Assert.Equal("<retEnviNFe/>", doc.XmlRetornoSefaz);
     }
+
+    [Theory]
+    [InlineData("10", true)]   // nao existe na tabela (caso real: app mandou 10)
+    [InlineData("03", true)]   // existe, mas ainda nao suportado
+    [InlineData("", true)]
+    [InlineData("01", false)]
+    [InlineData("07", false)]
+    [InlineData("49", false)]
+    [InlineData("60", false)]
+    [InlineData("99", false)]
+    public void Cst_de_PIS_COFINS_fora_da_tabela_vira_problema_de_validacao(string cst, bool problema)
+    {
+        Assert.Equal(problema, ServicoAutorizacao.ProblemaCstPisCofins(cst) is not null);
+    }
 }

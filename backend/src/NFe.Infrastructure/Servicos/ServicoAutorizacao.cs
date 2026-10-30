@@ -606,9 +606,31 @@ public sealed class ServicoAutorizacao
                 erros.Add($"Item {n}: quantidade deve ser maior que zero.");
             if (item.ValorUnitario <= 0 && item.ValorBruto <= 0)
                 erros.Add($"Item {n}: valor unitario ou valor bruto deve ser maior que zero.");
+            if (ProblemaCstPisCofins(item.CstPis) is { } pis)
+                erros.Add($"Item {n} ({item.Codigo}): CST de PIS {pis}");
+            if (ProblemaCstPisCofins(item.CstCofins) is { } cofins)
+                erros.Add($"Item {n} ({item.Codigo}): CST de COFINS {cofins}");
         }
 
         return erros;
+    }
+
+    /// <summary>
+    /// CST de PIS/COFINS da tabela oficial: 01-09, 49, 50-56, 60-67, 70-75, 98 e 99.
+    /// Devolve o problema (para a mensagem) ou null quando o CST e aceito.
+    /// </summary>
+    internal static string? ProblemaCstPisCofins(string? cst)
+    {
+        var c = (cst ?? "").Trim();
+        if (c.Length == 0) return "nao informado.";
+        if (c.Length != 2 || !int.TryParse(c, out var n)
+            || !(n is >= 1 and <= 9 or 49 or >= 50 and <= 56 or >= 60 and <= 67 or >= 70 and <= 75 or 98 or 99))
+            return $"'{c}' nao existe na tabela oficial. Use, por exemplo, 01 (aliquota basica), " +
+                   "04 (monofasica), 06 (aliquota zero), 07 (isenta), 08 (sem incidencia), " +
+                   "49 (outras saidas) ou 99 (outras operacoes); validos: 01-09, 49, 50-56, 60-67, 70-75, 98, 99.";
+        if (n == 3)
+            return "'03' (aliquota por unidade de medida) ainda nao e suportado por esta API.";
+        return null;
     }
 }
 

@@ -513,8 +513,9 @@ public sealed class GeradorXmlNFe
 
         if (grupo is null)
         {
-            throw new NotSupportedException(
-                $"CST {cst} de {tributo} nao suportado pelo gerador (CST 03 por quantidade ainda nao implementado).");
+            throw new ArgumentException(cst == "03"
+                ? $"CST 03 de {tributo} (aliquota por unidade de medida) ainda nao e suportado."
+                : $"CST '{cst}' de {tributo} nao existe na tabela oficial (validos: 01-09, 49, 50-56, 60-67, 70-75, 98, 99).");
         }
 
         return new XElement(Ns + grupo,
