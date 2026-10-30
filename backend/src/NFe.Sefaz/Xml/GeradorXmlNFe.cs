@@ -71,6 +71,7 @@ public sealed class GeradorXmlNFe
                 GerarTransportadora(req.Transportadora),
                 GerarVeiculo(req.Veiculo),
                 GerarVolume(req)),
+            GerarCobranca(req),
             GerarPagamento(req),
             GerarInfoAdicional(req, ambiente));
 
@@ -930,6 +931,106 @@ public sealed class GeradorXmlNFe
             temMarca ? new XElement(Ns + "marca", req.Marca) : null,
             req.PesoLiquido is { } pesoLiquido ? new XElement(Ns + "pesoL", Num(pesoLiquido, 3)) : null,
             req.PesoBruto is { } pesoBruto ? new XElement(Ns + "pesoB", Num(pesoBruto, 3)) : null);
+    }
+
+    /// <summary>Fatura e duplicatas efetivas (com os valores padrao preenchidos).</summary>
+    public sealed record Cobranca(
+        string NumeroFatura, decimal ValorOriginal, decimal ValorDesconto, decimal ValorLiquido,
+        IReadOnlyList<(string Numero, DateOnly Vencimento, decimal Valor)> Duplicatas);
+
+    /// <summary>
+    /// Confere fatura/duplicatas pelas regras da NF-e e devolve os problemas
+    /// (lista vazia = ok). Regras: ate 120 duplicatas; nDup "001", "002"...
+    /// em sequencia; vencimento valido, nao anterior a emissao e em ordem
+    /// crescente; valores positivos; soma das duplicatas = vLiq da fatura;
+    /// vLiq = vOrig - vDesc.
+    /// </summary>
+    public static List<string> ValidarCobranca(NotaFiscalRequest req)
+    {
+        var erros = new List<string>();
+        MontarCobranca(req, erros);
+        return erros;
+    }
+
+    private static Cobranca? MontarCobranca(NotaFiscalRequest req, List<string> erros)
+    {
+        var dups = req.Duplicatas ?? new List<DuplicataRequest>();
+        if (req.Fatura is null && dups.Count == 0) return null;
+
+        if (dups.Count > 120)
+            erros.Add($"duplicatas: no maximo 120 parcelas (recebidas {dups.Count}).");
+
+        var emissao = DateOnly.FromDateTime(req.DataEmissao.DateTime);
+        var lista = new List<(string, DateOnly, decimal)>();
+        DateOnly? anterior = null;
+        for (var i = 0; i < dups.Count; i++)
+        {
+            var d = dups[i];
+            var esperado = (i + 1).ToString("000", CultureInfo.InvariantCulture);
+            var numero = string.IsNullOrWhiteSpace(d.Numero) ? esperado : d.Numero.Trim();
+            if (numero != esperado)
+                erros.Add($"duplicatas[{i + 1}]: numero '{numero}' invalido. As parcelas devem ser numeradas " +
+                          $"001, 002, 003... em sequencia (esperado '{esperado}'); deixe vazio para numerar automaticamente.");
+
+            var venc = d.VencimentoData();
+            if (venc is null)
+                erros.Add($"duplicatas[{i + 1}]: vencimento '{d.Vencimento}' invalido. Use AAAA-MM-DD ou DD/MM/AAAA.");
+            else
+            {
+                if (venc.Value < emissao)
+                    erros.Add($"duplicatas[{i + 1}]: vencimento {venc:dd/MM/yyyy} anterior a emissao ({emissao:dd/MM/yyyy}).");
+                if (anterior is { } a && venc.Value < a)
+                    erros.Add($"duplicatas[{i + 1}]: vencimentos devem estar em ordem crescente.");
+                anterior = venc;
+            }
+
+            if (d.Valor <= 0)
+                erros.Add($"duplicatas[{i + 1}]: valor deve ser maior que zero.");
+
+            lista.Add((numero, venc ?? emissao, Math.Round(d.Valor, 2)));
+        }
+
+        var somaDups = lista.Sum(x => x.Item3);
+        var f = req.Fatura;
+        var nFat = string.IsNullOrWhiteSpace(f?.Numero)
+            ? req.Numero.ToString(CultureInfo.InvariantCulture)
+            : f!.Numero!.Trim();
+        if (nFat.Length > 60) erros.Add("fatura.numero: no maximo 60 caracteres.");
+
+        var vDesc = Math.Round(f?.ValorDesconto ?? 0m, 2);
+        var vOrig = Math.Round(f?.ValorOriginal ?? (f?.ValorLiquido is { } l ? l + vDesc : somaDups), 2);
+        var vLiq = Math.Round(f?.ValorLiquido ?? vOrig - vDesc, 2);
+
+        if (vOrig < 0 || vDesc < 0 || vLiq < 0)
+            erros.Add("fatura: valores nao podem ser negativos.");
+        if (vLiq != vOrig - vDesc)
+            erros.Add($"fatura: valorLiquido ({vLiq:0.00}) deve ser valorOriginal ({vOrig:0.00}) - valorDesconto ({vDesc:0.00}).");
+        if (lista.Count > 0 && somaDups != vLiq)
+            erros.Add($"duplicatas: a soma das parcelas ({somaDups:0.00}) deve ser igual ao valor liquido da fatura ({vLiq:0.00}).");
+
+        return new Cobranca(nFat, vOrig, vDesc, vLiq, lista);
+    }
+
+    /// <summary>Grupo cobr (fatura + duplicatas), entre transp e pag. Null quando nao informado.</summary>
+    private static XElement? GerarCobranca(NotaFiscalRequest req)
+    {
+        var erros = new List<string>();
+        var c = MontarCobranca(req, erros);
+        if (erros.Count > 0) throw new ArgumentException(string.Join(" ", erros));
+        if (c is null) return null;
+
+        var cobr = new XElement(Ns + "cobr",
+            new XElement(Ns + "fat",
+                new XElement(Ns + "nFat", c.NumeroFatura),
+                new XElement(Ns + "vOrig", Num(c.ValorOriginal, 2)),
+                new XElement(Ns + "vDesc", Num(c.ValorDesconto, 2)),
+                new XElement(Ns + "vLiq", Num(c.ValorLiquido, 2))));
+        foreach (var (numero, venc, valor) in c.Duplicatas)
+            cobr.Add(new XElement(Ns + "dup",
+                new XElement(Ns + "nDup", numero),
+                new XElement(Ns + "dVenc", venc.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture)),
+                new XElement(Ns + "vDup", Num(valor, 2))));
+        return cobr;
     }
 
     private static XElement GerarPagamento(NotaFiscalRequest req)

@@ -612,6 +612,7 @@ public sealed class ServicoAutorizacao
                 erros.Add($"Item {n} ({item.Codigo}): CST de COFINS {cofins}");
         }
 
+        erros.AddRange(NFe.Sefaz.Xml.GeradorXmlNFe.ValidarCobranca(req));
         return erros;
     }
 

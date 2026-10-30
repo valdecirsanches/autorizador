@@ -87,7 +87,58 @@ public sealed class NotaFiscalRequest
 
     public List<PagamentoRequest> Pagamentos { get; set; } = new();
 
+    /// <summary>
+    /// Fatura (grupo cobr/fat). Opcional: se omitida e houver duplicatas, a API
+    /// monta a fatura com nFat = numero da nota e vOrig = vLiq = soma das duplicatas.
+    /// </summary>
+    public FaturaRequest? Fatura { get; set; }
+
+    /// <summary>
+    /// Duplicatas (grupo cobr/dup), ate 120, em ordem crescente de vencimento.
+    /// O numero (nDup) e opcional: sem ele a API numera 001, 002, 003...
+    /// </summary>
+    public List<DuplicataRequest> Duplicatas { get; set; } = new();
+
     public string? InformacoesComplementares { get; set; }
+}
+
+public sealed class FaturaRequest
+{
+    /// <summary>Numero da fatura (nFat, ate 60 caracteres). Vazio = numero da nota.</summary>
+    public string? Numero { get; set; }
+    /// <summary>Valor original (vOrig). Vazio = soma das duplicatas.</summary>
+    public decimal? ValorOriginal { get; set; }
+    /// <summary>Valor do desconto (vDesc). Vazio = 0.</summary>
+    public decimal? ValorDesconto { get; set; }
+    /// <summary>Valor liquido (vLiq). Vazio = valorOriginal - valorDesconto.</summary>
+    public decimal? ValorLiquido { get; set; }
+}
+
+public sealed class DuplicataRequest
+{
+    /// <summary>Numero da parcela (nDup): "001", "002"... Vazio = numeracao automatica.</summary>
+    public string? Numero { get; set; }
+    /// <summary>
+    /// Data de vencimento (dVenc): "AAAA-MM-DD", "DD/MM/AAAA" ou data/hora ISO
+    /// (so a data e usada).
+    /// </summary>
+    public string? Vencimento { get; set; }
+
+    /// <summary>Interpreta <see cref="Vencimento"/>; null quando vazio ou invalido.</summary>
+    public DateOnly? VencimentoData()
+    {
+        var v = (Vencimento ?? "").Trim();
+        if (v.Length == 0) return null;
+        var c = System.Globalization.CultureInfo.InvariantCulture;
+        var st = System.Globalization.DateTimeStyles.None;
+        foreach (var f in new[] { "yyyy-MM-dd", "dd/MM/yyyy", "yyyyMMdd" })
+            if (DateOnly.TryParseExact(v, f, c, st, out var d)) return d;
+        return DateTimeOffset.TryParse(v, c, System.Globalization.DateTimeStyles.AssumeUniversal, out var dto)
+            ? DateOnly.FromDateTime(dto.DateTime)
+            : null;
+    }
+    /// <summary>Valor da parcela (vDup).</summary>
+    public decimal Valor { get; set; }
 }
 
 public sealed class TransportadoraRequest

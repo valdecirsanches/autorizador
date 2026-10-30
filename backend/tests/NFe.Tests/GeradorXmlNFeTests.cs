@@ -1079,4 +1079,58 @@ public class GeradorXmlNFeTests
 
         Assert.Equal(esperado, el?.Value);
     }
+
+    // ---- Fatura / duplicatas (grupo cobr) ---------------------------------
+
+    [Fact]
+    public void Cobranca_gera_fat_e_dup_numeradas_entre_transp_e_pag()
+    {
+        var req = Request(); // emissao 15/08/2024, vNF 21,00
+        req.Duplicatas.Add(new DuplicataRequest { Vencimento = "2024-09-15", Valor = 10.50m });
+        req.Duplicatas.Add(new DuplicataRequest { Vencimento = "15/10/2024", Valor = 10.50m });
+
+        var inf = InfNFe(new GeradorXmlNFe().Gerar(Emitente(), req, TipoAmbiente.Homologacao).Xml);
+        var nomes = inf.Elements().Select(e => e.Name.LocalName).ToList();
+        Assert.Equal(nomes.IndexOf("transp") + 1, nomes.IndexOf("cobr"));
+        Assert.Equal(nomes.IndexOf("cobr") + 1, nomes.IndexOf("pag"));
+
+        var cobr = inf.Element(Ns + "cobr")!;
+        var fat = cobr.Element(Ns + "fat")!;
+        Assert.Equal("123", fat.Element(Ns + "nFat")!.Value);
+        Assert.Equal("21.00", fat.Element(Ns + "vOrig")!.Value);
+        Assert.Equal("0.00", fat.Element(Ns + "vDesc")!.Value);
+        Assert.Equal("21.00", fat.Element(Ns + "vLiq")!.Value);
+
+        var dups = cobr.Elements(Ns + "dup").ToList();
+        Assert.Equal(2, dups.Count);
+        Assert.Equal("001", dups[0].Element(Ns + "nDup")!.Value);
+        Assert.Equal("2024-09-15", dups[0].Element(Ns + "dVenc")!.Value);
+        Assert.Equal("002", dups[1].Element(Ns + "nDup")!.Value);
+        Assert.Equal("2024-10-15", dups[1].Element(Ns + "dVenc")!.Value);
+        Assert.Equal("10.50", dups[1].Element(Ns + "vDup")!.Value);
+    }
+
+    [Fact]
+    public void Sem_fatura_nem_duplicatas_nao_gera_cobr()
+    {
+        var inf = InfNFe(new GeradorXmlNFe().Gerar(Emitente(), Request(), TipoAmbiente.Homologacao).Xml);
+        Assert.Null(inf.Element(Ns + "cobr"));
+    }
+
+    [Fact]
+    public void Cobranca_invalida_lista_os_problemas()
+    {
+        var req = Request();
+        req.Fatura = new FaturaRequest { Numero = "71274", ValorOriginal = 30m };
+        req.Duplicatas.Add(new DuplicataRequest { Numero = "1", Vencimento = "2024-08-01", Valor = 10m });
+        req.Duplicatas.Add(new DuplicataRequest { Vencimento = "data-ruim", Valor = 0m });
+
+        var erros = GeradorXmlNFe.ValidarCobranca(req);
+
+        Assert.Contains(erros, e => e.Contains("numero '1'"));
+        Assert.Contains(erros, e => e.Contains("anterior a emissao"));
+        Assert.Contains(erros, e => e.Contains("'data-ruim'"));
+        Assert.Contains(erros, e => e.Contains("maior que zero"));
+        Assert.Contains(erros, e => e.Contains("soma das parcelas"));
+    }
 }

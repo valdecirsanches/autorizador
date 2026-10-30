@@ -187,6 +187,8 @@ persistido da empresa não substitui esses dados.
 | `valorFrete` | decimal | não | **Frete da nota** (cabeçalho). O layout 4.00 só tem `vFrete` por item e no total, então a API rateia o valor em `det/prod/vFrete` proporcionalmente ao `vProd` de cada item (sobra de centavos na última linha) e soma a eventuais `itens[].valorFrete`. O `vFrete` do total é a soma exata dos itens e entra no `vNF`. Não pode ser negativo e exige `modalidadeFrete` diferente de `9` (sem transporte). |
 | `outrasDespesas` | decimal | não | **Despesas acessórias / acréscimo** da nota (não é frete nem seguro). A API rateia esse valor em `vOutro` proporcionalmente ao `vProd` de cada item — **sem alterar o preço unitário** — e joga a sobra de centavos na última linha, de modo que `Σvitens = vOutro` do total e o `vNF` feche exatamente (evita a rejeição **610**). Somado a eventuais `itens[].valorOutro`. |
 | `pagamentos` | array | não | Ver abaixo. |
+| `fatura` | objeto | não | Fatura (`cobr/fat`). Ver abaixo. |
+| `duplicatas` | array | não | Parcelas com número e vencimento (`cobr/dup`), aparecem no quadro **FATURA / DUPLICATAS** do DANFE. Ver abaixo. |
 | `informacoesComplementares` | string | não | |
 
 **Devolução de mercadoria (`finalidade` = 4)**
@@ -422,6 +424,32 @@ Valores negativos, `cst` fora de 3 dígitos ou `classificacaoTributaria` fora de
 > compor o total da nota (e não virar troco), use `outrasDespesas`: assim o `vNF`
 > sobe, o pagamento casa com o total e nenhum troco é gerado. Se `pagamentos` for
 > omitido, a API assume o total à vista em dinheiro (igual ao `vNF`, já com `outrasDespesas`).
+
+**`fatura` e `duplicatas[]`** (grupo `cobr`, entre `transp` e `pag`)
+
+| Campo | Tipo | Observação |
+|---|---|---|
+| `fatura.numero` | string | `nFat`, até 60 caracteres. Vazio = número da nota. |
+| `fatura.valorOriginal` | decimal | `vOrig`. Vazio = soma das duplicatas. |
+| `fatura.valorDesconto` | decimal | `vDesc`. Vazio = 0. |
+| `fatura.valorLiquido` | decimal | `vLiq`. Vazio = `valorOriginal − valorDesconto`. |
+| `duplicatas[].numero` | string | `nDup`: `001`, `002`… em sequência. **Vazio = numeração automática** (recomendado). |
+| `duplicatas[].vencimento` | string | `dVenc`: `AAAA-MM-DD`, `DD/MM/AAAA` ou data/hora ISO. |
+| `duplicatas[].valor` | decimal | `vDup`, maior que zero. |
+
+Basta mandar as duplicatas; a fatura é montada sozinha:
+
+```json
+"duplicatas": [
+  { "vencimento": "2026-11-29", "valor": 280.93 },
+  { "vencimento": "2026-12-29", "valor": 280.93 }
+]
+```
+
+Regras conferidas antes de enviar à SEFAZ (erro **400** com a lista do que corrigir):
+até 120 parcelas; `nDup` em sequência `001, 002…`; vencimento válido, **não anterior à
+emissão** e em **ordem crescente**; valores positivos; **soma das duplicatas = `vLiq`**;
+`vLiq = vOrig − vDesc`.
 
 ### Identificação da tentativa (`Idempotency-Key`)
 
