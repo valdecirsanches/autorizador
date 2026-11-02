@@ -100,6 +100,18 @@ public sealed class NotaFiscalRequest
     public List<DuplicataRequest> Duplicatas { get; set; } = new();
 
     public string? InformacoesComplementares { get; set; }
+
+    /// <summary>
+    /// Valor aproximado total dos tributos (ICMSTot/vTotTrib, Lei 12.741/2012).
+    /// Vazio = soma de itens[].valorTotalTributos (quando informados).
+    /// </summary>
+    public decimal? ValorTotalTributos { get; set; }
+
+    /// <summary>CSC na raiz (formato antigo do Facil). Prefira configuracao.csc.</summary>
+    public string? Csc { get; set; }
+
+    /// <summary>idCSC na raiz (formato antigo do Facil). Prefira configuracao.idCsc.</summary>
+    public string? IdCsc { get; set; }
 }
 
 public sealed class FaturaRequest
@@ -193,6 +205,47 @@ public sealed class ConfiguracaoNFeRequest
     /// "paisagem". Nao altera o XML, so a impressao.
     /// </summary>
     public string? OrientacaoDanfe { get; set; }
+
+    // ---- NFC-e (modelo 65) --------------------------------------------------
+
+    /// <summary>
+    /// CSC (Codigo de Seguranca do Contribuinte) da NFC-e, usado no hash do QR Code
+    /// versao 2. Na versao 3 nao e usado.
+    /// </summary>
+    public string? Csc { get; set; }
+
+    /// <summary>Identificador do CSC (idCSC, ex.: "000001").</summary>
+    public string? IdCsc { get; set; }
+
+    /// <summary>Sinonimo de <see cref="IdCsc"/> (alguns apps enviam "cscId").</summary>
+    public string? CscId { get; set; }
+
+    /// <summary>
+    /// Versao do QR Code da NFC-e: 2 ou 3. Vazio = 2 na emissao normal quando ha
+    /// CSC (aceita em todas as UFs), 3 sem CSC e sempre 3 em contingencia offline
+    /// (QR Code assinado com o certificado, NT 2025.001).
+    /// </summary>
+    public int? VersaoQrCode { get; set; }
+
+    /// <summary>
+    /// Contingencia offline da NFC-e (tpEmis = 9): a nota e gerada e assinada sem
+    /// falar com a SEFAZ e transmitida depois (ate 24 h). Usado pelo emissor local.
+    /// </summary>
+    public bool ContingenciaOffline { get; set; }
+
+    /// <summary>Data/hora de entrada em contingencia (dhCont). Vazio = dhEmi.</summary>
+    public DateTimeOffset? DataContingencia { get; set; }
+
+    /// <summary>Justificativa da contingencia (xJust, 15 a 256 caracteres).</summary>
+    public string? JustificativaContingencia { get; set; }
+
+    /// <summary>idCSC efetivo (IdCsc ou CscId), so digitos.</summary>
+    public string? IdCscEfetivo()
+    {
+        var v = string.IsNullOrWhiteSpace(IdCsc) ? CscId : IdCsc;
+        var d = new string((v ?? "").Where(char.IsDigit).ToArray());
+        return d.Length == 0 ? null : d;
+    }
 }
 
 public sealed class EmitenteNFeRequest
@@ -347,6 +400,11 @@ public sealed class ItemNotaRequest
     /// envia, o item sai sem o grupo, exatamente como antes.
     /// </summary>
     public IbsCbsItemRequest? IbsCbs { get; set; }
+
+    /// <summary>
+    /// Valor aproximado dos tributos do item (vTotTrib, Lei 12.741/2012). Opcional.
+    /// </summary>
+    public decimal? ValorTotalTributos { get; set; }
 }
 
 /// <summary>
@@ -393,4 +451,41 @@ public sealed class PagamentoRequest
     /// <summary>Meio de pagamento conforme tPag (01=Dinheiro, 03=Cartao credito...).</summary>
     public string Meio { get; set; } = "01";
     public decimal Valor { get; set; }
+
+    /// <summary>Descricao do meio (xPag), obrigatoria quando tPag = 99 (outros).</summary>
+    public string? Descricao { get; set; }
+
+    // ---- Grupo card (cartao, PIX e similares) --------------------------------
+    // Podem vir planos (aqui) ou dentro de "cartao"; o plano tem precedencia.
+
+    /// <summary>tpIntegra: 1 = integrado (TEF), 2 = nao integrado (POS/maquininha avulsa).</summary>
+    public int? TipoIntegracao { get; set; }
+
+    /// <summary>CNPJ da credenciadora / instituicao de pagamento (card/CNPJ).</summary>
+    public string? CnpjCredenciadora { get; set; }
+
+    /// <summary>Bandeira (tBand, 2 digitos: 01 Visa, 02 Mastercard ... 99 outros).</summary>
+    public string? Bandeira { get; set; }
+
+    /// <summary>Numero de autorizacao da transacao (cAut, ate 128 caracteres).</summary>
+    public string? Autorizacao { get; set; }
+
+    /// <summary>CNPJ do beneficiario do pagamento (CNPJReceb).</summary>
+    public string? CnpjRecebedor { get; set; }
+
+    /// <summary>Identificador do terminal de pagamento (idTermPag, ate 40).</summary>
+    public string? IdTerminal { get; set; }
+
+    /// <summary>Mesmos campos de cartao agrupados (formato alternativo).</summary>
+    public CartaoPagamentoRequest? Cartao { get; set; }
+}
+
+public sealed class CartaoPagamentoRequest
+{
+    public int? TipoIntegracao { get; set; }
+    public string? CnpjCredenciadora { get; set; }
+    public string? Bandeira { get; set; }
+    public string? Autorizacao { get; set; }
+    public string? CnpjRecebedor { get; set; }
+    public string? IdTerminal { get; set; }
 }

@@ -32,3 +32,8 @@ backend/NFe.Tests/
 # a base e configuravel por NFE_XML_DIR. Nunca versionar documentos fiscais.
 xmls/
 backend/**/xmls/
+
+# Emissor local da NFC-e: pacote publicado e fila de notas (dados fiscais da loja)
+backend/publish/
+**/NFe.EmissorLocal/fila/
+*.pfx

@@ -57,19 +57,28 @@ public sealed class ServicoEventos
         Guid documentoId,
         string justificativa,
         bool contingencia = false,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        string? chaveSubstituta = null)
     {
+        // Com chaveSubstituta: cancelamento por substituicao (110112, so NFC-e).
+        var substituicao = !string.IsNullOrWhiteSpace(chaveSubstituta);
+        var tipoEvento = substituicao ? 110112 : 110111;
+
         var documento = await _db.DocumentosFiscais
             .Include(d => d.Eventos)
             .Include(d => d.EventosFiscais)
             .FirstOrDefaultAsync(d => d.Id == documentoId && d.EmpresaId == empresaId, ct)
             ?? throw new InvalidOperationException($"Documento {documentoId} nao encontrado.");
 
+        if (substituicao && documento.Modelo != ModeloDocumento.NFCe)
+            throw new EventoInvalidoException(
+                "O cancelamento por substituicao e exclusivo da NFC-e (modelo 65).");
+
         // Idempotencia: nota ja cancelada devolve o evento homologado.
         if (documento.Status == StatusDocumento.Cancelado)
         {
             var homologado = documento.EventosFiscais
-                .Where(e => e.TipoEvento == 110111 && e.Homologado)
+                .Where(e => e.TipoEvento is 110111 or 110112 && e.Homologado)
                 .OrderByDescending(e => e.CriadoEm)
                 .FirstOrDefault();
             if (homologado is not null) return homologado;
@@ -98,13 +107,16 @@ public sealed class ServicoEventos
         var dadosEmissao = await ObterDadosEmissaoAsync(empresa, documento, ct);
         var codigoOrgao = _registry.ObterCodigoUf(dadosEmissao.Uf);
 
+        var substituta = new string((chaveSubstituta ?? "").Where(char.IsDigit).ToArray());
         var evento = new EventoFiscal
         {
             DocumentoFiscalId = documento.Id,
             ChaveAcesso = documento.ChaveAcesso!,
-            TipoEvento = 110111,
+            TipoEvento = tipoEvento,
             SequenciaEvento = 1,
-            Descricao = "Cancelamento",
+            Descricao = substituicao
+                ? $"Cancelamento por substituicao (substituta {substituta})"
+                : "Cancelamento",
             Justificativa = just,
             ProtocoloNFe = documento.Protocolo,
             CriadoEm = DateTime.UtcNow
@@ -114,21 +126,41 @@ public sealed class ServicoEventos
         {
             using var certificado = await _certificados.CarregarAtivoSefazAsync(empresaId, ct);
 
-            var (xmlEvento, idRef) = EventoClient.MontarCancelamento(new EventoClient.DadosCancelamento(
-                Uf: dadosEmissao.Uf,
-                Ambiente: documento.Ambiente,
-                CodigoOrgao: codigoOrgao,
-                Cnpj: dadosEmissao.Cnpj,
-                ChaveAcesso: documento.ChaveAcesso!,
-                ProtocoloNFe: documento.Protocolo!,
-                Justificativa: just));
+            string xmlEvento, idRef;
+            try
+            {
+                (xmlEvento, idRef) = substituicao
+                    ? EventoClient.MontarCancelamentoSubstituicao(new EventoClient.DadosCancelamentoSubstituicao(
+                        Uf: dadosEmissao.Uf,
+                        Ambiente: documento.Ambiente,
+                        CodigoOrgao: codigoOrgao,
+                        Cnpj: dadosEmissao.Cnpj,
+                        ChaveAcesso: documento.ChaveAcesso!,
+                        ProtocoloNFe: documento.Protocolo!,
+                        Justificativa: just,
+                        ChaveSubstituta: substituta,
+                        VersaoAplicativo: "NFeAutorizador/1.0"))
+                    : EventoClient.MontarCancelamento(new EventoClient.DadosCancelamento(
+                        Uf: dadosEmissao.Uf,
+                        Ambiente: documento.Ambiente,
+                        CodigoOrgao: codigoOrgao,
+                        Cnpj: dadosEmissao.Cnpj,
+                        ChaveAcesso: documento.ChaveAcesso!,
+                        ProtocoloNFe: documento.Protocolo!,
+                        Justificativa: just));
+            }
+            catch (ArgumentException ex)
+            {
+                throw new EventoInvalidoException(ex.Message);
+            }
 
             // A Signature do evento e IRMA de infEvento, filha de <evento>.
             var xmlAssinado = _assinador.Assinar(xmlEvento, idRef, certificado, nomeTagAssinatura: "evento");
 
             var resultado = await _cliente.EnviarAsync(
                 dadosEmissao.Uf, documento.Ambiente,
-                TiposEvento.Cancelamento, nSeqEvento: 1, documento.ChaveAcesso!,
+                substituicao ? TiposEvento.CancelamentoSubstituicao : TiposEvento.Cancelamento,
+                nSeqEvento: 1, documento.ChaveAcesso!,
                 xmlAssinado, certificado,
                 autorizadorOverride: dadosEmissao.UfAutorizadorOverride,
                 contingencia: contingencia, ct: ct);
@@ -145,7 +177,9 @@ public sealed class ServicoEventos
                 {
                     StatusAnterior = anterior,
                     StatusNovo = StatusDocumento.Cancelado,
-                    Descricao = "cancelamento homologado pela SEFAZ",
+                    Descricao = substituicao
+                        ? "cancelamento por substituicao homologado pela SEFAZ"
+                        : "cancelamento homologado pela SEFAZ",
                     Detalhe = $"evento cStat {evento.CodigoStatus} ({evento.Motivo}); " +
                               $"protocolo {evento.ProtocoloEvento ?? "-"}",
                     OcorridoEm = DateTime.UtcNow

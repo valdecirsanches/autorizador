@@ -124,6 +124,23 @@ public static class EmissaoEndpoints
                 var dto = Contratos.DocumentoFiscalDto.De(doc, incluirEventos: true);
                 var autorizada = doc.Status == StatusDocumento.Autorizado;
 
+                // NFC-e em contingencia off-line: assinada e valida para imprimir,
+                // ainda nao transmitida. 200 com o XML assinado (QR Code no
+                // infNFeSupl); transmitir depois com POST /nfe/{id}/reenviar.
+                if (doc.TipoEmissao == TipoEmissao.ContingenciaOffline && doc.Status == StatusDocumento.Assinado)
+                {
+                    dto = dto with
+                    {
+                        XmlBase64 = doc.XmlAssinado is null
+                            ? null
+                            : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(doc.XmlAssinado))
+                    };
+                    await RegistrarAsync(true, "Contingencia",
+                        $"NFC-e emitida em contingencia off-line; transmitir ate {dto.PrazoTransmissao:dd/MM/yyyy HH:mm} UTC.",
+                        doc: doc);
+                    return Results.Ok(dto);
+                }
+
                 // Ao autorizar, a resposta ja carrega o XML autorizado (nfeProc) e
                 // o DANFE em PDF, ambos em Base64, para o app salvar sem uma segunda
                 // requisicao. Se a geracao do PDF falhar por algum motivo, NAO
@@ -831,6 +848,67 @@ public static class EmissaoEndpoints
         .DisableAntiforgery();
 
         // -------------------------------------------------------------------
+        // NFC-e em contingencia off-line (tpEmis 9) assinada no caixa pelo
+        // emissor local: registra e transmite a SEFAZ. Idempotente pela chave
+        // (o emissor local pode reenviar com seguranca). 200 quando autorizada,
+        // com o XML autorizado; 422 quando rejeitada ou sem comunicacao (o
+        // emissor local tenta de novo).
+        // -------------------------------------------------------------------
+        g.MapPost("/empresas/{empresaId:guid}/nfce/contingencia", async (
+            Guid empresaId,
+            Contratos.ContingenciaNfceRequest req,
+            ServicoAutorizacao servico,
+            CancellationToken ct) =>
+        {
+            var xml = req?.Xml;
+            if (string.IsNullOrWhiteSpace(xml) && !string.IsNullOrWhiteSpace(req?.XmlBase64))
+            {
+                try { xml = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(req.XmlBase64)); }
+                catch (FormatException)
+                {
+                    return Results.BadRequest(new { erro = "xmlBase64 nao e um Base64 valido." });
+                }
+            }
+
+            try
+            {
+                var doc = await servico.ReceberContingenciaAsync(empresaId, xml ?? "", ct);
+                var autorizada = doc.Status == StatusDocumento.Autorizado;
+                var dto = Contratos.DocumentoFiscalDto.De(doc, incluirEventos: true);
+                var xmlResposta = doc.XmlProtocolado ?? doc.XmlAssinado;
+                dto = dto with
+                {
+                    XmlBase64 = xmlResposta is null
+                        ? null
+                        : Convert.ToBase64String(System.Text.Encoding.UTF8.GetBytes(xmlResposta))
+                };
+                return autorizada ? Results.Ok(dto) : Results.UnprocessableEntity(dto);
+            }
+            catch (RequisicaoInvalidaException ex)
+            {
+                return Results.BadRequest(new
+                {
+                    erro = "XML da NFC-e em contingencia invalido.",
+                    problemas = ex.Problemas
+                });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("nao encontrad"))
+            {
+                return Results.NotFound(new { erro = ex.Message });
+            }
+            catch (CertificadoException ex)
+            {
+                return Results.UnprocessableEntity(new
+                {
+                    erro = "Problema com o certificado da empresa.",
+                    detalhe = ex.Message
+                });
+            }
+        })
+        .WithName("ReceberNFCeContingencia")
+        .DisableAntiforgery();
+
+        // -------------------------------------------------------------------
         // Cancela uma NF-e autorizada (evento 110111). Exige justificativa de
         // 15 a 255 caracteres. Idempotente: nota ja cancelada retorna 200 com o
         // evento homologado. 200 quando homologado; 422 quando a SEFAZ rejeitou.
@@ -899,6 +977,83 @@ public static class EmissaoEndpoints
             }
         })
         .WithName("CancelarNFe")
+        .DisableAntiforgery();
+
+        // -------------------------------------------------------------------
+        // Cancelamento por substituicao (evento 110112, so NFC-e): cancela esta
+        // NFC-e informando a chave da NFC-e que a substitui (mesmo emitente).
+        // Mesmo retorno de /cancelar. O XML do evento sai em /cancelamento.xml.
+        // -------------------------------------------------------------------
+        g.MapPost("/nfe/{id:guid}/cancelar-substituicao", async (
+            Guid id,
+            Contratos.CancelamentoSubstituicaoRequest req,
+            NFeDbContext db,
+            ServicoEventos servico,
+            bool? contingencia,
+            CancellationToken ct) =>
+        {
+            if (req is null || string.IsNullOrWhiteSpace(req.Justificativa))
+                return Results.BadRequest(new
+                {
+                    erro = "Informe a justificativa do cancelamento (15 a 255 caracteres)."
+                });
+            if (string.IsNullOrWhiteSpace(req.ChaveSubstituta))
+                return Results.BadRequest(new
+                {
+                    erro = "Informe chaveSubstituta: a chave (44 digitos) da NFC-e que substitui esta."
+                });
+
+            var doc = await db.DocumentosFiscais
+                .AsNoTracking()
+                .FirstOrDefaultAsync(d => d.Id == id, ct);
+            if (doc is null)
+                return Results.NotFound(new { erro = "Documento nao encontrado." });
+
+            try
+            {
+                var evento = await servico.CancelarAsync(
+                    doc.EmpresaId, id, req.Justificativa, contingencia ?? false, ct,
+                    chaveSubstituta: req.ChaveSubstituta);
+
+                var dto = Contratos.EventoFiscalDto.De(evento);
+                return evento.Homologado
+                    ? Results.Ok(dto)
+                    : Results.UnprocessableEntity(dto);
+            }
+            catch (EventoInvalidoException ex)
+            {
+                return Results.UnprocessableEntity(new { erro = ex.Message });
+            }
+            catch (InvalidOperationException ex) when (ex.Message.Contains("nao encontrad"))
+            {
+                return Results.NotFound(new { erro = ex.Message });
+            }
+            catch (CertificadoException ex)
+            {
+                return Results.UnprocessableEntity(new
+                {
+                    erro = "Problema com o certificado da empresa.",
+                    detalhe = ex.Message
+                });
+            }
+            catch (SefazEndpointException ex)
+            {
+                return Results.UnprocessableEntity(new
+                {
+                    erro = "Nao foi possivel resolver o servico da SEFAZ para a UF/ambiente.",
+                    detalhe = ex.Message
+                });
+            }
+            catch (SefazSoapException ex)
+            {
+                return Results.UnprocessableEntity(new
+                {
+                    erro = "Falha de comunicacao com a SEFAZ.",
+                    detalhe = ex.Message
+                });
+            }
+        })
+        .WithName("CancelarNFCePorSubstituicao")
         .DisableAntiforgery();
 
         // -------------------------------------------------------------------
@@ -995,7 +1150,7 @@ public static class EmissaoEndpoints
         {
             var evento = await db.EventosFiscais
                 .AsNoTracking()
-                .Where(e => e.DocumentoFiscalId == id && e.TipoEvento == 110111 && e.Homologado)
+                .Where(e => e.DocumentoFiscalId == id && (e.TipoEvento == 110111 || e.TipoEvento == 110112) && e.Homologado)
                 .OrderByDescending(e => e.CriadoEm)
                 .FirstOrDefaultAsync(ct);
 
@@ -1023,7 +1178,7 @@ public static class EmissaoEndpoints
                 return Results.NotFound(new { erro = "Documento nao encontrado." });
 
             var cancelado = await db.EventosFiscais.AsNoTracking()
-                .AnyAsync(e => e.DocumentoFiscalId == id && e.TipoEvento == 110111 && e.Homologado, ct);
+                .AnyAsync(e => e.DocumentoFiscalId == id && (e.TipoEvento == 110111 || e.TipoEvento == 110112) && e.Homologado, ct);
             if (!cancelado)
                 return Results.UnprocessableEntity(new { erro = "Documento nao possui cancelamento homologado." });
 
@@ -1055,7 +1210,7 @@ public static class EmissaoEndpoints
         g.MapGet("/nfe/{id:guid}/cancelamento.pdf", async (Guid id, NFeDbContext db, CancellationToken ct) =>
         {
             var evento = await db.EventosFiscais.AsNoTracking()
-                .Where(e => e.DocumentoFiscalId == id && e.TipoEvento == 110111 && e.Homologado)
+                .Where(e => e.DocumentoFiscalId == id && (e.TipoEvento == 110111 || e.TipoEvento == 110112) && e.Homologado)
                 .OrderByDescending(e => e.CriadoEm)
                 .FirstOrDefaultAsync(ct);
             if (evento is null)

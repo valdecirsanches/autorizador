@@ -292,7 +292,8 @@ builder.Services.AddScoped(sp => new ServicoAutorizacao(
     sp.GetRequiredService<AutorizacaoClient>(),
     sp.GetService<ValidadorXsd>(),
     sp.GetRequiredService<ArquivadorXml>(),
-    sp.GetService<ILogger<ServicoAutorizacao>>()));
+    sp.GetService<ILogger<ServicoAutorizacao>>(),
+    sp.GetRequiredService<SefazEndpointRegistry>()));
 
 // Consulta de situacao (consSitNFe): mesmo padrao do status — client sem estado
 // mais um servico scoped que carrega o certificado da empresa.

@@ -1,0 +1,27 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <!--
+    Emissor local da NFC-e: roda no computador do caixa e assina NFC-e em
+    contingencia off-line (tpEmis 9) quando a internet ou a SEFAZ caem. Guarda
+    as notas numa fila em disco e as envia a API central quando a conexao volta.
+    Nao usa banco de dados. Ver docs/EMISSOR_LOCAL_NFCE.md.
+  -->
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <Version>1.0.0</Version>
+    <AssemblyName>NFeEmissorLocal</AssemblyName>
+    <RootNamespace>NFe.EmissorLocal</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\NFe.Domain\NFe.Domain.csproj" />
+    <ProjectReference Include="..\NFe.Sefaz\NFe.Sefaz.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <!-- Permite instalar como servico do Windows (sc.exe create ...). -->
+    <PackageReference Include="Microsoft.Extensions.Hosting.WindowsServices" Version="9.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="NFe.Tests" />
+  </ItemGroup>
+</Project>

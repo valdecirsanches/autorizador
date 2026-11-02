@@ -28,7 +28,18 @@ public sealed class SefazEndpointCatalog
 
     [JsonPropertyName("codigosIbgeUf")]
     public Dictionary<string, int> CodigosIbgeUf { get; set; } = new();
+
+    /// <summary>NFC-e: URL de consulta do QR Code por ambiente ("producao"/"homologacao") e UF.</summary>
+    [JsonPropertyName("qrCode")]
+    public Dictionary<string, Dictionary<string, string>> QrCode { get; set; } = new();
+
+    /// <summary>NFC-e: endereco de consulta pela chave (urlChave) por ambiente e UF.</summary>
+    [JsonPropertyName("urlChave")]
+    public Dictionary<string, Dictionary<string, string>> UrlChave { get; set; } = new();
 }
+
+/// <summary>Enderecos impressos/gravados no infNFeSupl da NFC-e.</summary>
+public sealed record UrlsNfce(string QrCode, string UrlChave);
 
 public sealed class AutorizadorConfig
 {
@@ -65,6 +76,7 @@ public sealed class SefazEndpointException : Exception
 public sealed class SefazEndpointRegistry
 {
     private readonly SefazEndpointCatalog _catalog;
+    private readonly SefazEndpointCatalog? _catalogNfce;
 
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
@@ -73,22 +85,47 @@ public sealed class SefazEndpointRegistry
         AllowTrailingCommas = true
     };
 
-    public SefazEndpointRegistry(SefazEndpointCatalog catalog) => _catalog = catalog;
+    public SefazEndpointRegistry(SefazEndpointCatalog catalog, SefazEndpointCatalog? catalogNfce = null)
+    {
+        _catalog = catalog;
+        _catalogNfce = catalogNfce;
+    }
 
-    /// <summary>Carrega o catalogo a partir do JSON embarcado ao lado do assembly.</summary>
+    /// <summary>true quando o catalogo da NFC-e (modelo 65) foi carregado.</summary>
+    public bool SuportaNfce => _catalogNfce is not null;
+
+    /// <summary>
+    /// Carrega os catalogos (NF-e e NFC-e) a partir dos JSON embarcados ao lado do
+    /// assembly. O da NFC-e e opcional: sem ele, so o modelo 55 e atendido.
+    /// </summary>
     public static SefazEndpointRegistry LoadDefault()
     {
-        var path = Path.Combine(AppContext.BaseDirectory, "Endpoints", "sefaz-endpoints.json");
-        if (!File.Exists(path))
-        {
-            // Fallback util em cenarios de teste onde o conteudo nao foi copiado.
-            var alt = Path.Combine(AppContext.BaseDirectory, "sefaz-endpoints.json");
-            if (File.Exists(alt)) path = alt;
-            else throw new SefazEndpointException(
-                $"Catalogo de endpoints nao encontrado. Procurado em: {path}");
-        }
-        return LoadFromFile(path);
+        var path = Localizar("sefaz-endpoints.json")
+            ?? throw new SefazEndpointException(
+                "Catalogo de endpoints nao encontrado. Procurado em: " +
+                Path.Combine(AppContext.BaseDirectory, "Endpoints", "sefaz-endpoints.json"));
+        var nfce = Localizar("sefaz-endpoints-nfce.json");
+        return new SefazEndpointRegistry(
+            LerCatalogo(File.ReadAllText(path)),
+            nfce is null ? null : LerCatalogo(File.ReadAllText(nfce)));
     }
+
+    private static string? Localizar(string arquivo)
+    {
+        var path = Path.Combine(AppContext.BaseDirectory, "Endpoints", arquivo);
+        if (File.Exists(path)) return path;
+        // Fallback util em cenarios de teste onde o conteudo nao foi copiado.
+        var alt = Path.Combine(AppContext.BaseDirectory, arquivo);
+        return File.Exists(alt) ? alt : null;
+    }
+
+    private static SefazEndpointCatalog LerCatalogo(string json) =>
+        JsonSerializer.Deserialize<SefazEndpointCatalog>(json, JsonOpts)
+            ?? throw new SefazEndpointException("Catalogo de endpoints invalido ou vazio.");
+
+    /// <summary>Carrega catalogos a partir de texto JSON (NF-e e, opcionalmente, NFC-e).</summary>
+    public static SefazEndpointRegistry LoadFromJson(string json, string? jsonNfce) =>
+        new(LerCatalogo(json), jsonNfce is null ? null : LerCatalogo(jsonNfce));
 
     public static SefazEndpointRegistry LoadFromFile(string path)
     {
@@ -96,12 +133,7 @@ public sealed class SefazEndpointRegistry
         return LoadFromJson(json);
     }
 
-    public static SefazEndpointRegistry LoadFromJson(string json)
-    {
-        var catalog = JsonSerializer.Deserialize<SefazEndpointCatalog>(json, JsonOpts)
-            ?? throw new SefazEndpointException("Catalogo de endpoints invalido ou vazio.");
-        return new SefazEndpointRegistry(catalog);
-    }
+    public static SefazEndpointRegistry LoadFromJson(string json) => new(LerCatalogo(json));
 
     public string VersaoLayout => _catalog.VersaoLayout;
 
@@ -170,14 +202,19 @@ public sealed class SefazEndpointRegistry
 
     /// <summary>
     /// Resolve a URL do servico. Quando contingencia e true, usa o SVC da UF.
+    /// Para a NFC-e (modelo 65) usa o catalogo proprio; NFC-e nao tem SVC.
     /// </summary>
     public EndpointResolvido Resolver(
         string uf,
         TipoAmbiente ambiente,
         ServicoSefaz servico,
         string? autorizadorOverride = null,
-        bool contingencia = false)
+        bool contingencia = false,
+        ModeloDocumento modelo = ModeloDocumento.NFe)
     {
+        if (modelo == ModeloDocumento.NFCe)
+            return ResolverNfce(uf, ambiente, servico, autorizadorOverride, contingencia);
+
         var ufNorm = Normalizar(uf);
 
         var autorizador = contingencia
@@ -205,6 +242,73 @@ public sealed class SefazEndpointRegistry
             Servico: servico,
             Url: url,
             CodigoUf: ObterCodigoUf(ufNorm));
+    }
+
+    private EndpointResolvido ResolverNfce(
+        string uf, TipoAmbiente ambiente, ServicoSefaz servico, string? autorizadorOverride, bool contingencia)
+    {
+        var c = _catalogNfce ?? throw new SefazEndpointException(
+            "Catalogo da NFC-e (sefaz-endpoints-nfce.json) nao encontrado ao lado da API.");
+        if (contingencia)
+            throw new SefazEndpointException(
+                "A NFC-e nao tem SVC: em falha de comunicacao use a contingencia offline (tpEmis 9).");
+
+        var ufNorm = Normalizar(uf);
+        string autorizador;
+        if (!string.IsNullOrWhiteSpace(autorizadorOverride))
+        {
+            autorizador = Normalizar(autorizadorOverride);
+            if (!c.Autorizadores.ContainsKey(autorizador))
+                throw new SefazEndpointException(
+                    $"Autorizador de override '{autorizadorOverride}' nao existe no catalogo da NFC-e.");
+        }
+        else if (!c.AutorizadorPorUf.TryGetValue(ufNorm, out autorizador!))
+        {
+            throw new SefazEndpointException(
+                $"Nenhum autorizador de NFC-e mapeado para a UF '{uf}'. " +
+                $"UFs disponiveis: {string.Join(", ", c.AutorizadorPorUf.Keys.OrderBy(k => k))}.");
+        }
+
+        if (!c.Autorizadores.TryGetValue(autorizador, out var cfg))
+            throw new SefazEndpointException($"Autorizador '{autorizador}' ausente do catalogo da NFC-e.");
+
+        var mapa = ambiente == TipoAmbiente.Producao ? cfg.Producao : cfg.Homologacao;
+        if (!mapa.TryGetValue(servico.ToString(), out var url) || string.IsNullOrWhiteSpace(url))
+            throw new SefazEndpointException(
+                $"Servico '{servico}' de NFC-e nao disponivel no autorizador '{autorizador}' " +
+                $"para o ambiente '{ambiente}'.");
+
+        return new EndpointResolvido(
+            Uf: ufNorm,
+            Autorizador: autorizador,
+            NomeAutorizador: cfg.Nome,
+            Ambiente: ambiente,
+            Servico: servico,
+            Url: url,
+            CodigoUf: ObterCodigoUf(ufNorm));
+    }
+
+    /// <summary>URLs do QR Code e de consulta pela chave da NFC-e da UF do emitente.</summary>
+    public UrlsNfce ObterUrlsNfce(string uf, TipoAmbiente ambiente)
+    {
+        var c = _catalogNfce ?? throw new SefazEndpointException(
+            "Catalogo da NFC-e (sefaz-endpoints-nfce.json) nao encontrado ao lado da API.");
+        var ufNorm = Normalizar(uf);
+        var amb = ambiente == TipoAmbiente.Producao ? "producao" : "homologacao";
+        if (!c.QrCode.TryGetValue(amb, out var qrs) || !qrs.TryGetValue(ufNorm, out var qr)
+            || string.IsNullOrWhiteSpace(qr))
+            throw new SefazEndpointException($"URL do QR Code da NFC-e nao cadastrada para {ufNorm} ({amb}).");
+        if (!c.UrlChave.TryGetValue(amb, out var chs) || !chs.TryGetValue(ufNorm, out var ch)
+            || string.IsNullOrWhiteSpace(ch))
+            throw new SefazEndpointException($"URL de consulta pela chave da NFC-e nao cadastrada para {ufNorm} ({amb}).");
+        return new UrlsNfce(qr, ch);
+    }
+
+    /// <summary>Modelo do documento pelos digitos 21-22 da chave de acesso (55 ou 65).</summary>
+    public static ModeloDocumento ModeloDaChave(string? chave)
+    {
+        var c = new string((chave ?? "").Where(char.IsDigit).ToArray());
+        return c.Length == 44 && c.Substring(20, 2) == "65" ? ModeloDocumento.NFCe : ModeloDocumento.NFe;
     }
 
     /// <summary>Enumera todos os endpoints, util para diagnostico e validacao.</summary>

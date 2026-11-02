@@ -277,9 +277,34 @@ public static class Contratos
         // o XML autorizado (nfeProc) e o DANFE em PDF, ambos em Base64, para o app
         // salvar sem uma segunda requisicao. Nulos nos demais endpoints.
         string? XmlBase64 = null,
-        string? DanfePdfBase64 = null)
+        string? DanfePdfBase64 = null,
+        // NFC-e: emitida em contingencia off-line (tpEmis 9) e ainda a transmitir.
+        bool ContingenciaOffline = false,
+        // NFC-e: QR Code e endereco de consulta gravados no infNFeSupl do XML.
+        string? QrCode = null,
+        string? UrlChave = null,
+        // NFC-e em contingencia: prazo para transmitir (dhEmi + 24 h; BA, CE, PE e
+        // SC aceitam ate o 1o dia util seguinte).
+        DateTime? PrazoTransmissao = null)
     {
         public static DocumentoFiscalDto De(DocumentoFiscal d, bool incluirEventos = false)
+        {
+            var contingencia = d.TipoEmissao == TipoEmissao.ContingenciaOffline;
+            var (qr, urlChave) = d.Modelo == ModeloDocumento.NFCe
+                ? NFe.Sefaz.Nfce.QrCodeNfce.LerInfNFeSupl(d.XmlAssinado)
+                : (null, null);
+            return De0(d, incluirEventos) with
+            {
+                ContingenciaOffline = contingencia,
+                QrCode = qr,
+                UrlChave = urlChave,
+                PrazoTransmissao = contingencia && d.Status != StatusDocumento.Autorizado
+                    ? d.DataEmissao.AddHours(24)
+                    : null
+            };
+        }
+
+        private static DocumentoFiscalDto De0(DocumentoFiscal d, bool incluirEventos)
         {
             return new DocumentoFiscalDto(
                 d.Id, d.EmpresaId, d.ChaveAcesso,
@@ -333,6 +358,18 @@ public static class Contratos
 
     /// <summary>Corpo do pedido de cancelamento de uma NF-e.</summary>
     public sealed record CancelamentoRequest(string Justificativa);
+
+    /// <summary>
+    /// Cancelamento por substituicao (110112, NFC-e): justificativa (15 a 255) e a
+    /// chave (44 digitos) da NFC-e que substitui a cancelada.
+    /// </summary>
+    public sealed record CancelamentoSubstituicaoRequest(string Justificativa, string ChaveSubstituta);
+
+    /// <summary>
+    /// NFC-e assinada em contingencia off-line (tpEmis 9) para transmitir: o
+    /// elemento NFe assinado (com infNFeSupl) em <c>xml</c> ou <c>xmlBase64</c>.
+    /// </summary>
+    public sealed record ContingenciaNfceRequest(string? Xml, string? XmlBase64);
 
     /// <summary>Corpo do pedido de carta de correcao (xCorrecao, 15 a 1000 caracteres).</summary>
     public sealed record CartaCorrecaoRequest(string Correcao);

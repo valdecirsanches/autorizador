@@ -135,7 +135,8 @@ public sealed class InutilizacaoClient
             throw new ArgumentException("XML da inutilizacao vazio.", nameof(xmlInutAssinado));
 
         var endpoint = _registry.Resolver(
-            dados.Uf, dados.Ambiente, ServicoSefaz.Inutilizacao, autorizadorOverride);
+            dados.Uf, dados.Ambiente, ServicoSefaz.Inutilizacao, autorizadorOverride,
+            modelo: dados.Modelo);
 
         var resposta = await _soap.EnviarAsync(endpoint, xmlInutAssinado, certificado, ct);
 

@@ -225,6 +225,11 @@ Para instalar no seu servidor como serviço (systemd + nginx, sem Vercel), siga
 [`docs/INSTALACAO_DO_ZERO.md`](docs/INSTALACAO_DO_ZERO.md) e use
 `deploy/painel/instalar-painel.sh`.
 
+**NFC-e (modelo 65):** mesma emissão da NF-e com `"modelo": 65`; QR Code v2/v3,
+contingência off-line e cancelamento por substituição em
+[`docs/EMISSAO_NFE.md`](docs/EMISSAO_NFE.md#nfc-e-modelo-65). Para emitir sem internet
+no caixa, instale o emissor local: [`docs/EMISSOR_LOCAL_NFCE.md`](docs/EMISSOR_LOCAL_NFCE.md).
+
 ---
 
 ## Schemas XSD

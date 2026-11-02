@@ -50,10 +50,11 @@ public sealed class StatusServicoClient
         CertificadoSefaz certificado,
         string? autorizadorOverride = null,
         bool contingencia = false,
-        CancellationToken ct = default)
+        CancellationToken ct = default,
+        ModeloDocumento modelo = ModeloDocumento.NFe)
     {
         var endpoint = _registry.Resolver(
-            uf, ambiente, ServicoSefaz.StatusServico, autorizadorOverride, contingencia);
+            uf, ambiente, ServicoSefaz.StatusServico, autorizadorOverride, contingencia, modelo);
 
         var xml = MontarConsulta(endpoint.CodigoUf, ambiente);
         var resposta = await _soap.EnviarAsync(endpoint, xml, certificado, ct);

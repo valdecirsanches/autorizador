@@ -13,11 +13,14 @@ public static class TiposEvento
 {
     public const string Cancelamento = "110111";
     public const string CartaCorrecao = "110110";
+    /// <summary>Cancelamento por substituicao (so NFC-e), NT 2018.004.</summary>
+    public const string CancelamentoSubstituicao = "110112";
 
     public static string Descricao(string tpEvento) => tpEvento switch
     {
         Cancelamento => "Cancelamento",
         CartaCorrecao => "Carta de Correcao",
+        CancelamentoSubstituicao => "Cancelamento por substituicao",
         _ => "Evento"
     };
 }
@@ -133,6 +136,83 @@ public sealed class EventoClient
         return (evento.ToString(SaveOptions.DisableFormatting), id);
     }
 
+    /// <summary>Dados do cancelamento por substituicao (tpEvento 110112, so NFC-e).</summary>
+    public sealed record DadosCancelamentoSubstituicao(
+        string Uf,
+        TipoAmbiente Ambiente,
+        int CodigoOrgao,
+        string Cnpj,
+        string ChaveAcesso,
+        string ProtocoloNFe,
+        string Justificativa,
+        string ChaveSubstituta,
+        string VersaoAplicativo,
+        DateTimeOffset? DataEvento = null);
+
+    /// <summary>
+    /// Monta o infEvento (SEM assinatura) do cancelamento por substituicao: a
+    /// NFC-e e cancelada por ter sido substituida por outra (chNFeRef) do mesmo
+    /// emitente. detEvento: descEvento, cOrgaoAutor, tpAutor (1), verAplic,
+    /// nProt, xJust e chNFeRef, nesta ordem.
+    /// </summary>
+    public static (string Xml, string IdReferencia) MontarCancelamentoSubstituicao(
+        DadosCancelamentoSubstituicao d)
+    {
+        var chave = (d.ChaveAcesso ?? "").Trim();
+        var substituta = new string((d.ChaveSubstituta ?? "").Where(char.IsDigit).ToArray());
+        if (chave.Length != 44)
+            throw new ArgumentException("Chave de acesso deve ter 44 digitos.", nameof(d));
+        if (chave.Substring(20, 2) != "65")
+            throw new ArgumentException("O cancelamento por substituicao e exclusivo da NFC-e (modelo 65).", nameof(d));
+        if (substituta.Length != 44)
+            throw new ArgumentException("chaveSubstituta deve ter 44 digitos.", nameof(d));
+        if (substituta == chave)
+            throw new ArgumentException("A chave substituta deve ser de outra NFC-e.", nameof(d));
+        if (substituta.Substring(20, 2) != "65")
+            throw new ArgumentException("A chave substituta deve ser de uma NFC-e (modelo 65).", nameof(d));
+        if (substituta.Substring(6, 14) != chave.Substring(6, 14))
+            throw new ArgumentException("A NFC-e substituta deve ser do mesmo emitente (CNPJ).", nameof(d));
+        if (string.IsNullOrWhiteSpace(d.ProtocoloNFe))
+            throw new ArgumentException("Protocolo de autorizacao (nProt) obrigatorio.", nameof(d));
+        var just = (d.Justificativa ?? string.Empty).Trim();
+        if (just.Length < 15 || just.Length > 255)
+            throw new ArgumentException(
+                "A justificativa do cancelamento deve ter de 15 a 255 caracteres.", nameof(d));
+        var verAplic = string.IsNullOrWhiteSpace(d.VersaoAplicativo) ? "NFeAutorizador/1.0" : d.VersaoAplicativo.Trim();
+        if (verAplic.Length > 20) verAplic = verAplic[..20];
+
+        const int nSeq = 1;
+        var ns = XNamespace.Get(NamespacesSefaz.PortalFiscal);
+        var id = MontarIdEvento(TiposEvento.CancelamentoSubstituicao, chave, nSeq);
+        var dh = FormatarDataHora(d.DataEvento ?? DateTimeOffset.UtcNow);
+
+        var infEvento = new XElement(ns + "infEvento",
+            new XAttribute("Id", id),
+            new XElement(ns + "cOrgao", d.CodigoOrgao),
+            new XElement(ns + "tpAmb", (int)d.Ambiente),
+            new XElement(ns + "CNPJ", SomenteDigitos(d.Cnpj)),
+            new XElement(ns + "chNFe", chave),
+            new XElement(ns + "dhEvento", dh),
+            new XElement(ns + "tpEvento", TiposEvento.CancelamentoSubstituicao),
+            new XElement(ns + "nSeqEvento", nSeq),
+            new XElement(ns + "verEvento", "1.00"),
+            new XElement(ns + "detEvento",
+                new XAttribute("versao", "1.00"),
+                new XElement(ns + "descEvento", "Cancelamento por substituicao"),
+                new XElement(ns + "cOrgaoAutor", chave[..2]),
+                new XElement(ns + "tpAutor", 1),
+                new XElement(ns + "verAplic", verAplic),
+                new XElement(ns + "nProt", d.ProtocoloNFe.Trim()),
+                new XElement(ns + "xJust", just),
+                new XElement(ns + "chNFeRef", substituta)));
+
+        var evento = new XElement(ns + "evento",
+            new XAttribute("versao", "1.00"),
+            infEvento);
+
+        return (evento.ToString(SaveOptions.DisableFormatting), id);
+    }
+
     /// <summary>
     /// Dados de uma carta de correcao (tpEvento 110110). Diferente do
     /// cancelamento, admite varias por nota — a sequencia (nSeqEvento, 1 a 20)
@@ -227,7 +307,8 @@ public sealed class EventoClient
             throw new ArgumentException("XML do evento vazio.", nameof(xmlEventoAssinado));
 
         var endpoint = _registry.Resolver(
-            uf, ambiente, ServicoSefaz.RecepcaoEvento, autorizadorOverride, contingencia);
+            uf, ambiente, ServicoSefaz.RecepcaoEvento, autorizadorOverride, contingencia,
+            SefazEndpointRegistry.ModeloDaChave(chaveAcesso));
 
         var lote = string.IsNullOrWhiteSpace(idLote) ? GerarIdLote() : idLote;
         var envio = MontarEnvEvento(lote, xmlEventoAssinado);

@@ -76,7 +76,8 @@ public sealed class ConsultaProtocoloClient
                 "Chave de acesso deve conter exatamente 44 digitos.", nameof(chaveAcesso));
 
         var endpoint = _registry.Resolver(
-            uf, ambiente, ServicoSefaz.ConsultaProtocolo, autorizadorOverride, contingencia);
+            uf, ambiente, ServicoSefaz.ConsultaProtocolo, autorizadorOverride, contingencia,
+            SefazEndpointRegistry.ModeloDaChave(chave));
 
         var xml = MontarConsulta(ambiente, chave);
         var resposta = await _soap.EnviarAsync(endpoint, xml, certificado, ct);

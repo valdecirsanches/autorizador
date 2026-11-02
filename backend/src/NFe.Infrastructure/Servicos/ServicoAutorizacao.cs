@@ -7,6 +7,7 @@ using NFe.Domain.Modelos;
 using NFe.Infrastructure.Data;
 using NFe.Infrastructure.Security;
 using NFe.Sefaz.Endpoints;
+using NFe.Sefaz.Nfce;
 using NFe.Sefaz.Servicos;
 using NFe.Sefaz.Soap;
 using NFe.Sefaz.Xml;
@@ -31,6 +32,7 @@ public sealed class ServicoAutorizacao
     private readonly ValidadorXsd? _validador;
     private readonly ArquivadorXml? _arquivador;
     private readonly ILogger<ServicoAutorizacao>? _log;
+    private readonly SefazEndpointRegistry? _registry;
 
     public ServicoAutorizacao(
         NFeDbContext db,
@@ -40,8 +42,10 @@ public sealed class ServicoAutorizacao
         AutorizacaoClient cliente,
         ValidadorXsd? validador = null,
         ArquivadorXml? arquivador = null,
-        ILogger<ServicoAutorizacao>? log = null)
+        ILogger<ServicoAutorizacao>? log = null,
+        SefazEndpointRegistry? registry = null)
     {
+        _registry = registry;
         _db = db;
         _certificados = certificados;
         _gerador = gerador;
@@ -64,6 +68,7 @@ public sealed class ServicoAutorizacao
     {
         ArgumentNullException.ThrowIfNull(req);
 
+        ValidadorNotaFiscal.Normalizar(req);
         var problemas = ValidarRequest(req);
         if (problemas.Count > 0)
             throw new RequisicaoInvalidaException(problemas);
@@ -83,8 +88,33 @@ public sealed class ServicoAutorizacao
 
         var ambiente = configuracao.Ambiente!.Value;
 
+        // Contingencia off-line: o mesmo numero devolve a MESMA nota. A chave tem
+        // um codigo aleatorio; gerar de novo criaria uma segunda NFC-e (outra
+        // chave) para o numero se o app repetir o pedido. Rejeitada pode ser
+        // emitida de novo.
+        if (req.TipoEmissao == TipoEmissao.ContingenciaOffline)
+        {
+            var existente = await _db.DocumentosFiscais
+                .Include(d => d.Eventos)
+                .Where(d => d.EmpresaId == empresaId
+                            && d.Modelo == ModeloDocumento.NFCe
+                            && d.Ambiente == ambiente
+                            && d.Serie == req.Serie
+                            && d.Numero == req.Numero
+                            && d.TipoEmissao == TipoEmissao.ContingenciaOffline
+                            && d.Status != StatusDocumento.Rejeitado)
+                .OrderByDescending(d => d.CriadoEm)
+                .FirstOrDefaultAsync(ct);
+            if (existente is not null) return existente;
+        }
+
         // ---- Fase 1: gerar + assinar + persistir (transacao curta) ----
         var documento = await PrepararDocumentoAsync(emitente, req, ambiente, ct);
+
+        // NFC-e em contingencia off-line (tpEmis 9): a nota ja vale com o QR Code
+        // assinado e e transmitida depois (POST /api/nfe/{id}/reenviar, ate 24 h).
+        if (documento.TipoEmissao == TipoEmissao.ContingenciaOffline)
+            return documento;
 
         // ---- Fase 2: transmitir a SEFAZ (fora de transacao) ----
         await TransmitirAsync(
@@ -128,6 +158,18 @@ public sealed class ServicoAutorizacao
             var xmlAssinado = _assinador.Assinar(
                 gerada.Xml, "NFe" + gerada.ChaveAcesso, certificado);
 
+            // NFC-e: QR Code e urlChave no infNFeSupl, fora do infNFe (nao altera a
+            // assinatura). Em contingencia off-line o QR Code v3 e assinado.
+            if (req.Modelo == ModeloDocumento.NFCe)
+            {
+                var registry = _registry ?? throw new InvalidOperationException(
+                    "Registro de endpoints indisponivel: nao e possivel gerar o QR Code da NFC-e.");
+                var cfg = req.Configuracao!;
+                (xmlAssinado, _, _) = QrCodeNfce.Aplicar(
+                    xmlAssinado, registry.ObterUrlsNfce(empresa.Uf, ambiente),
+                    cfg.Csc, cfg.IdCscEfetivo(), cfg.VersaoQrCode, certificado);
+            }
+
             _validador?.Validar(xmlAssinado, "nfe_v4.00.xsd");
 
             var documento = new DocumentoFiscal
@@ -145,9 +187,9 @@ public sealed class ServicoAutorizacao
                 DigitoVerificador = gerada.DigitoVerificador,
                 DataEmissao = req.DataEmissao.UtcDateTime,
                 DataSaidaEntrada = req.DataSaidaEntrada?.UtcDateTime,
-                DestinatarioDocumento = req.Destinatario.Documento,
-                DestinatarioNome = req.Destinatario.Nome,
-                DestinatarioUf = req.Destinatario.Uf,
+                DestinatarioDocumento = req.Destinatario?.Documento,
+                DestinatarioNome = req.Destinatario?.Nome,
+                DestinatarioUf = req.Destinatario?.Uf,
                 ValorProdutos = req.Itens.Sum(i => i.ValorBruto > 0 ? i.ValorBruto : i.Quantidade * i.ValorUnitario),
                 ValorIcms = req.Itens.Sum(i => i.ValorIcms),
                 NaturezaOperacao = req.NaturezaOperacao,
@@ -156,7 +198,10 @@ public sealed class ServicoAutorizacao
             };
             documento.ValorTotal = documento.ValorProdutos;
 
-            RegistrarEvento(documento, null, StatusDocumento.Assinado, "documento gerado e assinado");
+            RegistrarEvento(documento, null, StatusDocumento.Assinado,
+                req.TipoEmissao == TipoEmissao.ContingenciaOffline
+                    ? "NFC-e emitida em contingencia off-line (tpEmis 9); transmitir em ate 24 h"
+                    : "documento gerado e assinado");
 
             _db.DocumentosFiscais.Add(documento);
             await _db.SaveChangesAsync(ct);
@@ -164,6 +209,109 @@ public sealed class ServicoAutorizacao
 
             return documento;
         });
+    }
+
+    /// <summary>
+    /// Recebe uma NFC-e JA ASSINADA em contingencia off-line (tpEmis 9) por outro
+    /// emissor (o emissor local do caixa), registra e transmite a SEFAZ. Idempotente
+    /// pela chave: se a nota ja existe, devolve-a (autorizada) ou retransmite o XML
+    /// guardado. O XML e transmitido exatamente como recebido (a assinatura e o QR
+    /// Code assinado nao podem mudar).
+    /// </summary>
+    public async Task<DocumentoFiscal> ReceberContingenciaAsync(
+        Guid empresaId, string xmlAssinado, CancellationToken ct = default)
+    {
+        if (string.IsNullOrWhiteSpace(xmlAssinado))
+            throw new RequisicaoInvalidaException(["Informe o XML assinado da NFC-e (xml ou xmlBase64)."]);
+
+        var xml = xmlAssinado.Trim();
+        // Aceita o elemento NFe com ou sem declaracao XML; nfeProc nao (ja autorizada).
+        if (xml.StartsWith("<?xml", StringComparison.Ordinal))
+            xml = xml[(xml.IndexOf("?>", StringComparison.Ordinal) + 2)..].TrimStart();
+
+        System.Xml.XmlDocument doc;
+        try
+        {
+            doc = new System.Xml.XmlDocument { PreserveWhitespace = true };
+            doc.LoadXml(xml);
+        }
+        catch (System.Xml.XmlException ex)
+        {
+            throw new RequisicaoInvalidaException([$"XML invalido: {ex.Message}"]);
+        }
+
+        var ns = new System.Xml.XmlNamespaceManager(doc.NameTable);
+        ns.AddNamespace("n", "http://www.portalfiscal.inf.br/nfe");
+        ns.AddNamespace("ds", "http://www.w3.org/2000/09/xmldsig#");
+        string Txt(string xp) => doc.SelectSingleNode(xp, ns)?.InnerText?.Trim() ?? "";
+
+        var problemas = new List<string>();
+        if (doc.DocumentElement?.LocalName != "NFe")
+            problemas.Add("O XML deve ser o elemento NFe assinado (nao o nfeProc).");
+        var id = doc.SelectSingleNode("//n:infNFe/@Id", ns)?.Value ?? "";
+        var chave = id.StartsWith("NFe", StringComparison.Ordinal) ? id[3..] : "";
+        if (chave.Length != 44) problemas.Add("XML sem chave de acesso valida (infNFe/@Id).");
+        if (Txt("//n:infNFe/n:ide/n:mod") != "65") problemas.Add("Somente NFC-e (mod 65).");
+        if (Txt("//n:infNFe/n:ide/n:tpEmis") != "9") problemas.Add("Somente NFC-e em contingencia off-line (tpEmis 9).");
+        if (doc.SelectSingleNode("//ds:Signature", ns) is null) problemas.Add("XML sem assinatura (Signature).");
+        if (doc.SelectSingleNode("//n:infNFeSupl/n:qrCode", ns) is null) problemas.Add("XML sem QR Code (infNFeSupl).");
+        if (problemas.Count > 0) throw new RequisicaoInvalidaException(problemas);
+
+        var empresa = await _db.Empresas.FirstOrDefaultAsync(e => e.Id == empresaId, ct)
+            ?? throw new InvalidOperationException($"Empresa {empresaId} nao encontrada.");
+        if (Txt("//n:infNFe/n:emit/n:CNPJ") != SomenteDigitos(empresa.Cnpj))
+            throw new RequisicaoInvalidaException(["O CNPJ do emitente no XML nao e o da empresa."]);
+
+        var existente = await _db.DocumentosFiscais
+            .Include(d => d.Eventos)
+            .FirstOrDefaultAsync(d => d.EmpresaId == empresaId && d.ChaveAcesso == chave, ct);
+        if (existente is not null)
+        {
+            if (existente.Status is StatusDocumento.Autorizado or StatusDocumento.Cancelado
+                or StatusDocumento.Denegado)
+                return existente;
+            return await ReenviarAsync(empresaId, existente.Id, ct: ct);
+        }
+
+        var ambiente = Txt("//n:infNFe/n:ide/n:tpAmb") == "1" ? TipoAmbiente.Producao : TipoAmbiente.Homologacao;
+        var inv = System.Globalization.CultureInfo.InvariantCulture;
+        decimal Dec(string xp) => decimal.TryParse(Txt(xp), System.Globalization.NumberStyles.Number, inv, out var v) ? v : 0m;
+        var dhEmi = DateTimeOffset.TryParse(Txt("//n:infNFe/n:ide/n:dhEmi"), inv,
+            System.Globalization.DateTimeStyles.None, out var dh) ? dh.UtcDateTime : DateTime.UtcNow;
+        var destDoc = Txt("//n:infNFe/n:dest/n:CNPJ") is { Length: > 0 } c ? c : Txt("//n:infNFe/n:dest/n:CPF");
+
+        var documento = new DocumentoFiscal
+        {
+            EmpresaId = empresaId,
+            ChaveAcesso = chave,
+            Modelo = ModeloDocumento.NFCe,
+            Serie = int.Parse(chave.Substring(22, 3), inv),
+            Numero = long.Parse(chave.Substring(25, 9), inv),
+            Ambiente = ambiente,
+            TipoEmissao = TipoEmissao.ContingenciaOffline,
+            TipoOperacao = Txt("//n:infNFe/n:ide/n:tpNF") == "0" ? TipoOperacao.Entrada : TipoOperacao.Saida,
+            Status = StatusDocumento.Assinado,
+            CodigoNumerico = chave.Substring(35, 8),
+            DigitoVerificador = chave[43] - '0',
+            DataEmissao = dhEmi,
+            DestinatarioDocumento = destDoc.Length > 0 ? destDoc : null,
+            DestinatarioNome = Txt("//n:infNFe/n:dest/n:xNome") is { Length: > 0 } nome ? nome : null,
+            ValorProdutos = Dec("//n:infNFe/n:total/n:ICMSTot/n:vProd"),
+            ValorIcms = Dec("//n:infNFe/n:total/n:ICMSTot/n:vICMS"),
+            ValorTotal = Dec("//n:infNFe/n:total/n:ICMSTot/n:vNF"),
+            NaturezaOperacao = Txt("//n:infNFe/n:ide/n:natOp"),
+            XmlGerado = xml,
+            XmlAssinado = xml
+        };
+        RegistrarEvento(documento, null, StatusDocumento.Assinado,
+            "NFC-e recebida do emissor local (contingencia off-line)");
+        _db.DocumentosFiscais.Add(documento);
+        await _db.SaveChangesAsync(ct);
+
+        var uf = Txt("//n:infNFe/n:emit/n:enderEmit/n:UF");
+        await TransmitirAsync(empresa, uf, empresa.UfAutorizadorOverride, documento, ambiente,
+            contingencia: false, ct);
+        return documento;
     }
 
     /// <summary>Numero maximo de tentativas de transmissao numa unica chamada.</summary>
@@ -506,133 +654,11 @@ public sealed class ServicoAutorizacao
     /// Valida a configuração, o emitente e os campos fiscais antes de gerar XML.
     /// Retorna a lista de problemas legíveis (vazia = tudo certo).
     /// </summary>
-    internal static List<string> ValidarRequest(NotaFiscalRequest req)
-    {
-        var erros = new List<string>();
+    internal static List<string> ValidarRequest(NotaFiscalRequest req) =>
+        NFe.Sefaz.Xml.ValidadorNotaFiscal.Validar(req);
 
-        if (req.Configuracao is null)
-        {
-            erros.Add("Configuracao da emissao nao informada.");
-        }
-        else
-        {
-            if (req.Configuracao.Ambiente is null ||
-                !Enum.IsDefined(typeof(TipoAmbiente), req.Configuracao.Ambiente.Value))
-                erros.Add("Ambiente da emissao obrigatorio: 1=producao ou 2=homologacao.");
-            if (!string.IsNullOrWhiteSpace(req.Configuracao.UfAutorizadorOverride) &&
-                !CodigoUf.SiglaValida(req.Configuracao.UfAutorizadorOverride))
-                erros.Add("UF do autorizador invalida.");
-        }
-
-        if (req.Emitente is null)
-        {
-            erros.Add("Cadastro do emitente nao informado no JSON.");
-        }
-        else
-        {
-            var emitente = req.Emitente;
-            if (SomenteDigitos(emitente.Cnpj).Length != 14)
-                erros.Add("CNPJ do emitente deve conter 14 digitos.");
-            if (string.IsNullOrWhiteSpace(emitente.RazaoSocial))
-                erros.Add("Razao social do emitente nao informada.");
-            if (string.IsNullOrWhiteSpace(emitente.InscricaoEstadual))
-                erros.Add("Inscricao estadual do emitente nao informada.");
-            if (emitente.RegimeTributario is null ||
-                !Enum.IsDefined(typeof(RegimeTributario), emitente.RegimeTributario.Value))
-                erros.Add("Regime tributario do emitente obrigatorio ou invalido.");
-            if (string.IsNullOrWhiteSpace(emitente.Logradouro))
-                erros.Add("Logradouro do emitente nao informado.");
-            if (string.IsNullOrWhiteSpace(emitente.Numero))
-                erros.Add("Numero do endereco do emitente nao informado.");
-            if (string.IsNullOrWhiteSpace(emitente.Bairro))
-                erros.Add("Bairro do emitente nao informado.");
-            if (SomenteDigitos(emitente.CodigoMunicipio).Length != 7)
-                erros.Add("Codigo IBGE do municipio do emitente deve conter 7 digitos.");
-            if (string.IsNullOrWhiteSpace(emitente.NomeMunicipio))
-                erros.Add("Nome do municipio do emitente nao informado.");
-            if (!CodigoUf.SiglaValida(emitente.Uf))
-                erros.Add("UF do emitente invalida.");
-            if (SomenteDigitos(emitente.Cep).Length != 8)
-                erros.Add("CEP do emitente deve conter 8 digitos.");
-        }
-
-        // A numeracao e controlada pelo app: o numero (nNF) e obrigatorio e deve
-        // ser positivo. A API nao gera mais numero automaticamente.
-        if (req.Numero <= 0)
-            erros.Add("Numero da nota (nNF) nao informado. A numeracao e controlada pelo app; envie um numero positivo.");
-        if (req.Serie < 0)
-            erros.Add("Serie invalida.");
-
-        if (string.IsNullOrWhiteSpace(req.NaturezaOperacao))
-            erros.Add("Natureza da operacao (natOp) nao informada.");
-
-        if (req.Destinatario is null)
-        {
-            erros.Add("Destinatario nao informado.");
-        }
-        else
-        {
-            if (string.IsNullOrWhiteSpace(req.Destinatario.Nome))
-                erros.Add("Nome/razao social do destinatario nao informado.");
-            if (string.IsNullOrWhiteSpace(req.Destinatario.Documento))
-                erros.Add("Documento (CPF/CNPJ) do destinatario nao informado.");
-        }
-
-        if (req.Itens is null || req.Itens.Count == 0)
-        {
-            erros.Add("A nota precisa de ao menos um item.");
-            return erros;
-        }
-
-        for (var i = 0; i < req.Itens.Count; i++)
-        {
-            var item = req.Itens[i];
-            var n = i + 1; // numero do item exibido ao usuario (1-based)
-
-            if (string.IsNullOrWhiteSpace(item.Codigo))
-                erros.Add($"Item {n}: codigo do produto (cProd) nao informado.");
-            if (string.IsNullOrWhiteSpace(item.Descricao))
-                erros.Add($"Item {n}: descricao do produto (xProd) nao informada.");
-            if (string.IsNullOrWhiteSpace(item.Ncm))
-                erros.Add($"Item {n}: NCM nao informado.");
-            if (string.IsNullOrWhiteSpace(item.Cfop))
-                erros.Add($"Item {n}: CFOP nao informado.");
-            if (!string.IsNullOrWhiteSpace(item.CBenef)
-                && item.CBenef.Trim().Length is not (8 or 10))
-                erros.Add($"Item {n}: cBenef deve ter 8 ou 10 caracteres (ou SEM CBENEF).");
-            if (string.IsNullOrWhiteSpace(item.UnidadeComercial))
-                erros.Add($"Item {n}: unidade comercial (uCom) nao informada.");
-            if (item.Quantidade <= 0)
-                erros.Add($"Item {n}: quantidade deve ser maior que zero.");
-            if (item.ValorUnitario <= 0 && item.ValorBruto <= 0)
-                erros.Add($"Item {n}: valor unitario ou valor bruto deve ser maior que zero.");
-            if (ProblemaCstPisCofins(item.CstPis) is { } pis)
-                erros.Add($"Item {n} ({item.Codigo}): CST de PIS {pis}");
-            if (ProblemaCstPisCofins(item.CstCofins) is { } cofins)
-                erros.Add($"Item {n} ({item.Codigo}): CST de COFINS {cofins}");
-        }
-
-        erros.AddRange(NFe.Sefaz.Xml.GeradorXmlNFe.ValidarCobranca(req));
-        return erros;
-    }
-
-    /// <summary>
-    /// CST de PIS/COFINS da tabela oficial: 01-09, 49, 50-56, 60-67, 70-75, 98 e 99.
-    /// Devolve o problema (para a mensagem) ou null quando o CST e aceito.
-    /// </summary>
-    internal static string? ProblemaCstPisCofins(string? cst)
-    {
-        var c = (cst ?? "").Trim();
-        if (c.Length == 0) return "nao informado.";
-        if (c.Length != 2 || !int.TryParse(c, out var n)
-            || !(n is >= 1 and <= 9 or 49 or >= 50 and <= 56 or >= 60 and <= 67 or >= 70 and <= 75 or 98 or 99))
-            return $"'{c}' nao existe na tabela oficial. Use, por exemplo, 01 (aliquota basica), " +
-                   "04 (monofasica), 06 (aliquota zero), 07 (isenta), 08 (sem incidencia), " +
-                   "49 (outras saidas) ou 99 (outras operacoes); validos: 01-09, 49, 50-56, 60-67, 70-75, 98, 99.";
-        if (n == 3)
-            return "'03' (aliquota por unidade de medida) ainda nao e suportado por esta API.";
-        return null;
-    }
+    internal static string? ProblemaCstPisCofins(string? cst) =>
+        NFe.Sefaz.Xml.ValidadorNotaFiscal.ProblemaCstPisCofins(cst);
 }
 
 /// <summary>

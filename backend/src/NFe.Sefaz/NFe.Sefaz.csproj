@@ -15,6 +15,9 @@
     <None Update="Endpoints\sefaz-endpoints.json">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </None>
+    <None Update="Endpoints\sefaz-endpoints-nfce.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
     <!-- Cadeia de ACs da ICP-Brasil (raizes + intermediarias) embutida no
          assembly, para validar o certificado do servidor da SEFAZ sem depender
          do trust store do sistema operacional. -->

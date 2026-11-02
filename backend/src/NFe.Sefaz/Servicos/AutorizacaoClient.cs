@@ -91,7 +91,8 @@ public sealed class AutorizacaoClient
             throw new ArgumentException("XML da NF-e vazio.", nameof(xmlNFeAssinada));
 
         var endpoint = _registry.Resolver(
-            uf, ambiente, ServicoSefaz.Autorizacao, autorizadorOverride, contingencia);
+            uf, ambiente, ServicoSefaz.Autorizacao, autorizadorOverride, contingencia,
+            ModeloDoXml(xmlNFeAssinada));
 
         var lote = string.IsNullOrWhiteSpace(idLote) ? GerarIdLote() : idLote;
         var envio = MontarEnvio(lote, xmlNFeAssinada);
@@ -119,6 +120,12 @@ public sealed class AutorizacaoClient
     }
 
     /// <summary>Monta enviNFe 4.00 no modo sincrono, embutindo a NF-e assinada.</summary>
+    /// <summary>Modelo pelo &lt;mod&gt; do ide: 65 = NFC-e (catalogo proprio), senao NF-e.</summary>
+    public static ModeloDocumento ModeloDoXml(string xml) =>
+        System.Text.RegularExpressions.Regex.IsMatch(xml ?? "", @"<mod>\s*65\s*</mod>")
+            ? ModeloDocumento.NFCe
+            : ModeloDocumento.NFe;
+
     public static string MontarEnvio(string idLote, string xmlNFeAssinada)
     {
         ValidarIdLote(idLote);

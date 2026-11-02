@@ -61,7 +61,7 @@ public sealed class GeradorXmlNFe
             new XAttribute("Id", ChaveAcesso.ParaId(chave)),
             GerarIde(req, cUF, cNF, dv, ambiente, emit),
             GerarEmit(emit),
-            GerarDest(req.Destinatario, ambiente),
+            GerarDest(req.Destinatario, ambiente, req.Modelo),
             GerarItens(req, emit.RegimeTributario),
             GerarTotal(req),
             new XElement(Ns + "transp",
@@ -141,7 +141,8 @@ public sealed class GeradorXmlNFe
             new XElement(Ns + "tpNF", (int)req.TipoOperacao),
             new XElement(Ns + "idDest", (int)req.DestinoOperacao),
             new XElement(Ns + "cMunFG", emit.CodigoMunicipio),
-            new XElement(Ns + "tpImp", 1),
+            // tpImp: 1 = DANFE retrato (NF-e); 4 = DANFE NFC-e.
+            new XElement(Ns + "tpImp", req.Modelo == ModeloDocumento.NFCe ? 4 : 1),
             new XElement(Ns + "tpEmis", (int)req.TipoEmissao),
             new XElement(Ns + "cDV", dv),
             new XElement(Ns + "tpAmb", (int)ambiente),
@@ -152,10 +153,24 @@ public sealed class GeradorXmlNFe
             new XElement(Ns + "verProc", "NFeAutorizador/1.0"));
 
         // dhSaiEnt e opcional; no XSD 4.00 vem logo apos dhEmi e antes de tpNF.
-        if (req.DataSaidaEntrada is { } saida)
+        // A NFC-e nao admite dhSaiEnt (a saida e a propria venda presencial).
+        if (req.DataSaidaEntrada is { } saida && req.Modelo != ModeloDocumento.NFCe)
         {
             ide.Element(Ns + "dhEmi")!
                .AddAfterSelf(new XElement(Ns + "dhSaiEnt", FormatarDataHora(saida, emit.Uf)));
+        }
+
+        // Contingencia (tpEmis diferente de 1): dhCont e xJust logo apos verProc.
+        if (req.TipoEmissao != TipoEmissao.Normal)
+        {
+            var cfg = req.Configuracao;
+            var dhCont = cfg?.DataContingencia ?? req.DataEmissao;
+            var just = string.IsNullOrWhiteSpace(cfg?.JustificativaContingencia)
+                ? JustificativaContingenciaPadrao
+                : cfg!.JustificativaContingencia!.Trim();
+            ide.Add(
+                new XElement(Ns + "dhCont", FormatarDataHora(dhCont, emit.Uf)),
+                new XElement(Ns + "xJust", just.Length > 256 ? just[..256] : just));
         }
 
         // NFref e o ultimo grupo do ide no XSD 4.00 (apos verProc, dhCont e xJust).
@@ -222,8 +237,12 @@ public sealed class GeradorXmlNFe
             new XElement(Ns + "CRT", (int)emit.RegimeTributario));
     }
 
-    private static XElement GerarDest(DestinatarioRequest dest, TipoAmbiente ambiente)
+    private static XElement? GerarDest(DestinatarioRequest? dest, TipoAmbiente ambiente, ModeloDocumento modelo)
     {
+        if (modelo == ModeloDocumento.NFCe)
+            return GerarDestNfce(dest, ambiente);
+        ArgumentNullException.ThrowIfNull(dest);
+
         var doc = new string(dest.Documento.Where(char.IsDigit).ToArray());
         var elementoDoc = doc.Length == 14
             ? new XElement(Ns + "CNPJ", doc)
@@ -306,6 +325,8 @@ public sealed class GeradorXmlNFe
             prod.Add(new XElement(Ns + "indTot", 1));
 
             var imposto = new XElement(Ns + "imposto",
+                // vTotTrib (Lei 12.741/2012) e o primeiro filho de imposto.
+                item.ValorTotalTributos is > 0 ? new XElement(Ns + "vTotTrib", Num(item.ValorTotalTributos.Value, 2)) : null,
                 new XElement(Ns + "ICMS", GrupoIcms(item, regime)),
                 new XElement(Ns + "PIS", GrupoPisCofins(item.CstPis, "PIS",
                     item.BaseCalculoPis, item.AliquotaPis, item.ValorPis)),
@@ -395,8 +416,15 @@ public sealed class GeradorXmlNFe
 
         if (simples)
         {
+            // CSOSN 500: ICMS cobrado anteriormente por ST (grupo proprio, campos
+            // de retencao opcionais).
+            if (cstInformado == "500")
+                return new XElement(Ns + "ICMSSN500",
+                    new XElement(Ns + "orig", origem),
+                    new XElement(Ns + "CSOSN", "500"));
+
             // CSOSN 102: sem permissao de credito, sem tributacao no Simples.
-            var csosn = cstInformado is "102" or "103" or "300" or "400" or "500" ? cstInformado : "102";
+            var csosn = cstInformado is "102" or "103" or "300" or "400" ? cstInformado : "102";
             return new XElement(Ns + "ICMSSN102",
                 new XElement(Ns + "orig", origem),
                 new XElement(Ns + "CSOSN", csosn));
@@ -571,7 +599,9 @@ public sealed class GeradorXmlNFe
                 new XElement(Ns + "vPIS", Num(vPIS, 2)),
                 new XElement(Ns + "vCOFINS", Num(vCOFINS, 2)),
                 new XElement(Ns + "vOutro", Num(vOutro, 2)),
-                new XElement(Ns + "vNF", Num(vNF, 2))));
+                new XElement(Ns + "vNF", Num(vNF, 2)),
+                // vTotTrib (Lei 12.741/2012) vem logo apos vNF.
+                ValorTotalTributos(req) is > 0 and var vTotTrib ? new XElement(Ns + "vTotTrib", Num(vTotTrib, 2)) : null));
 
         var ibsCbsTot = GerarTotalIbsCbs(req);
         if (ibsCbsTot is not null)
@@ -1054,9 +1084,7 @@ public sealed class GeradorXmlNFe
             foreach (var p in req.Pagamentos)
             {
                 totalPago += p.Valor;
-                pag.Add(new XElement(Ns + "detPag",
-                    new XElement(Ns + "tPag", p.Meio),
-                    new XElement(Ns + "vPag", Num(p.Valor, 2))));
+                pag.Add(GerarDetPag(p));
             }
         }
 
@@ -1069,6 +1097,101 @@ public sealed class GeradorXmlNFe
             pag.Add(new XElement(Ns + "vTroco", Num(troco, 2)));
 
         return pag;
+    }
+
+    /// <summary>Texto de xJust quando o app nao informa o motivo da contingencia.</summary>
+    public const string JustificativaContingenciaPadrao =
+        "Sem comunicacao com a SEFAZ para autorizacao on-line";
+
+    /// <summary>Meios que levam o grupo card mesmo sem dados da transacao (tpIntegra 2).</summary>
+    private static readonly HashSet<string> MeiosComCartao = new(StringComparer.Ordinal) { "03", "04", "17" };
+
+    /// <summary>
+    /// detPag: tPag, xPag (obrigatorio para 99), vPag e o grupo card. O card vai
+    /// para cartao de credito/debito e PIX (03, 04, 17) e para qualquer meio em
+    /// que o app mande dados da transacao (credenciadora, bandeira, autorizacao).
+    /// </summary>
+    private static XElement GerarDetPag(PagamentoRequest p)
+    {
+        var meio = (p.Meio ?? "").Trim();
+        var det = new XElement(Ns + "detPag", new XElement(Ns + "tPag", meio));
+        var xPag = (p.Descricao ?? "").Trim();
+        if (meio == "99" && xPag.Length < 2) xPag = "Outros";
+        if (xPag.Length >= 2) det.Add(new XElement(Ns + "xPag", xPag.Length > 60 ? xPag[..60] : xPag));
+        det.Add(new XElement(Ns + "vPag", Num(p.Valor, 2)));
+
+        var c = p.Cartao;
+        var tpIntegra = p.TipoIntegracao ?? c?.TipoIntegracao;
+        var cnpj = SoDigitos(Primeiro(p.CnpjCredenciadora, c?.CnpjCredenciadora));
+        var tBand = SoDigitos(Primeiro(p.Bandeira, c?.Bandeira));
+        var cAut = Primeiro(p.Autorizacao, c?.Autorizacao)?.Trim() ?? "";
+        var cnpjReceb = SoDigitos(Primeiro(p.CnpjRecebedor, c?.CnpjRecebedor));
+        var idTerm = Primeiro(p.IdTerminal, c?.IdTerminal)?.Trim() ?? "";
+
+        var temDados = cnpj.Length > 0 || tBand.Length > 0 || cAut.Length > 0
+                       || cnpjReceb.Length > 0 || idTerm.Length > 0;
+        if (!MeiosComCartao.Contains(meio) && !temDados)
+            return det;
+
+        var card = new XElement(Ns + "card",
+            new XElement(Ns + "tpIntegra", tpIntegra is 1 ? 1 : 2));
+        if (cnpj.Length == 14) card.Add(new XElement(Ns + "CNPJ", cnpj));
+        if (tBand.Length > 0) card.Add(new XElement(Ns + "tBand", tBand.PadLeft(2, '0')));
+        if (cAut.Length > 0) card.Add(new XElement(Ns + "cAut", cAut.Length > 128 ? cAut[..128] : cAut));
+        if (cnpjReceb.Length == 14) card.Add(new XElement(Ns + "CNPJReceb", cnpjReceb));
+        if (idTerm.Length > 0) card.Add(new XElement(Ns + "idTermPag", idTerm.Length > 40 ? idTerm[..40] : idTerm));
+        det.Add(card);
+        return det;
+    }
+
+    private static string? Primeiro(string? a, string? b) => string.IsNullOrWhiteSpace(a) ? b : a;
+
+    /// <summary>vTotTrib da nota: o informado, ou a soma dos itens.</summary>
+    internal static decimal ValorTotalTributos(NotaFiscalRequest req) =>
+        req.ValorTotalTributos
+        ?? req.Itens.Sum(i => i.ValorTotalTributos ?? 0m);
+
+    /// <summary>
+    /// Destinatario da NFC-e: opcional (consumidor nao identificado = sem dest).
+    /// Com CPF/CNPJ: nome opcional, endereco so quando completo, indIEDest 9.
+    /// </summary>
+    private static XElement? GerarDestNfce(DestinatarioRequest? dest, TipoAmbiente ambiente)
+    {
+        var doc = SoDigitos(dest?.Documento);
+        if (dest is null || doc.Length == 0) return null;
+
+        var dEl = new XElement(Ns + "dest",
+            new XElement(Ns + (doc.Length == 14 ? "CNPJ" : "CPF"), doc));
+
+        if (!string.IsNullOrWhiteSpace(dest.Nome))
+            dEl.Add(new XElement(Ns + "xNome",
+                ambiente == TipoAmbiente.Homologacao ? TextoHomologacao : dest.Nome.Trim()));
+
+        var temEndereco = !string.IsNullOrWhiteSpace(dest.Logradouro)
+            && !string.IsNullOrWhiteSpace(dest.Numero)
+            && !string.IsNullOrWhiteSpace(dest.Bairro)
+            && SoDigitos(dest.CodigoMunicipio).Length == 7
+            && !string.IsNullOrWhiteSpace(dest.NomeMunicipio)
+            && !string.IsNullOrWhiteSpace(dest.Uf);
+        if (temEndereco)
+            dEl.Add(new XElement(Ns + "enderDest",
+                new XElement(Ns + "xLgr", dest.Logradouro),
+                new XElement(Ns + "nro", dest.Numero),
+                Opcional("xCpl", dest.Complemento),
+                new XElement(Ns + "xBairro", dest.Bairro),
+                new XElement(Ns + "cMun", SoDigitos(dest.CodigoMunicipio)),
+                new XElement(Ns + "xMun", dest.NomeMunicipio),
+                new XElement(Ns + "UF", dest.Uf),
+                SoDigitos(dest.Cep).Length == 8 ? new XElement(Ns + "CEP", SoDigitos(dest.Cep)) : null,
+                new XElement(Ns + "cPais", dest.CodigoPais),
+                new XElement(Ns + "xPais", dest.NomePais),
+                Fone(dest.Telefone)));
+
+        // NFC-e: consumidor final nao contribuinte (indIEDest 9), sem IE.
+        dEl.Add(new XElement(Ns + "indIEDest", 9));
+        var email = Opcional("email", dest.Email);
+        if (email is not null) dEl.Add(email);
+        return dEl;
     }
 
     private static XElement? GerarInfoAdicional(NotaFiscalRequest req, TipoAmbiente ambiente)

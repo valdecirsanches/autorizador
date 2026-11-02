@@ -792,6 +792,101 @@ Notas importantes:
 - O `EmpresaDto` expõe `temLogo: bool` para o painel decidir se mostra a
   pré-visualiza��ão.
 
+## NFC-e (modelo 65)
+
+A NFC-e usa o **mesmo endpoint** da NF-e (`POST /api/empresas/{empresaId}/nfe`) com
+`"modelo": 65`. A API escolhe sozinha os webservices da NFC-e da UF (catálogo
+`sefaz-endpoints-nfce.json`, 27 UFs), gera o QR Code e o grava no `infNFeSupl`.
+
+**Diferenças em relação à NF-e**
+
+- `destinatario` é **opcional** (consumidor não identificado = sem grupo `dest`). Com
+  CPF/CNPJ: nome opcional, endereço só se vier completo, `indIEDest` sempre 9.
+- `consumidorFinal` tem de ser `true`; `tpImp` = 4 (DANFE NFC-e); sem `dhSaiEnt`.
+- Envio sempre síncrono; não existe SVC: na falha, use a **contingência off-line**.
+
+**Campos próprios**
+
+| Campo | XML | Observação |
+|---|---|---|
+| `configuracao.csc`, `configuracao.idCsc` (ou `cscId`) | QR Code v2 | Também aceitos na raiz (`csc`, `idCsc`). |
+| `configuracao.versaoQrCode` | `infNFeSupl/qrCode` | `2` ou `3`. Vazio: **2** com CSC na emissão normal; **3** sem CSC e sempre **3** em contingência. |
+| `configuracao.contingenciaOffline` | `ide/tpEmis` = 9, `dhCont`, `xJust` | Gera e assina sem falar com a SEFAZ. |
+| `configuracao.justificativaContingencia` | `ide/xJust` | 15 a 256 caracteres. Vazio = "Sem comunicacao com a SEFAZ para autorizacao on-line". |
+| `configuracao.dataContingencia` | `ide/dhCont` | Vazio = `dataEmissao`. |
+| `itens[].valorTotalTributos` | `det/imposto/vTotTrib` | Lei 12.741/2012. Vale também para NF-e. |
+| `valorTotalTributos` | `total/ICMSTot/vTotTrib` | Vazio = soma dos itens. |
+| `pagamentos[].descricao` | `detPag/xPag` | Obrigatório para `meio` 99 (vazio = "Outros"). |
+| `pagamentos[].tipoIntegracao` | `card/tpIntegra` | 1 = TEF integrado, 2 = maquininha avulsa (padrão). |
+| `pagamentos[].cnpjCredenciadora` | `card/CNPJ` | |
+| `pagamentos[].bandeira` | `card/tBand` | 01 a 27, 99. |
+| `pagamentos[].autorizacao` | `card/cAut` | No PIX (`17`), o identificador da transação. |
+| `pagamentos[].cnpjRecebedor`, `pagamentos[].idTerminal` | `card/CNPJReceb`, `card/idTermPag` | Vinculação do pagamento (GO, CE, RS, PB...). |
+
+Os campos de cartão também são aceitos dentro de `pagamentos[].cartao`. O grupo
+`card` sai para crédito, débito e PIX (`03`, `04`, `17`) e para qualquer meio em que
+venham dados da transação.
+
+**QR Code** (NT 2025.001)
+
+```
+v2 on-line : url?p=chave|2|tpAmb|idCSC|SHA1(chave|2|tpAmb|idCSC + CSC)
+v2 off-line: url?p=chave|2|tpAmb|dia|vNF|digVal(hex)|idCSC|SHA1(... + CSC)
+v3 on-line : url?p=chave|3|tpAmb
+v3 off-line: url?p=chave|3|tpAmb|dia|vNF|tp_idDest|cDest|base64(RSA-SHA1 com o certificado)
+```
+
+A resposta da emissão traz também `qrCode`, `urlChave`, `contingenciaOffline` e,
+em contingência, `prazoTransmissao`.
+
+### Contingência off-line (tpEmis 9)
+
+A nota é gerada, assinada e pode ser impressa na hora; a transmissão à SEFAZ deve
+ocorrer em até **24 h** (BA, CE, PE e SC: até o 1º dia útil seguinte). Duas formas:
+
+1. **A API central está no ar, mas a SEFAZ não** (o caixa tem internet):
+   emita com `"configuracao": { "contingenciaOffline": true, ... }`. A resposta vem
+   **200**, com `contingenciaOffline: true`, `xmlBase64` (XML assinado com o QR Code) e
+   `prazoTransmissao`. Quando a SEFAZ voltar: `POST /api/nfe/{id}/reenviar`.
+2. **Sem internet na loja**: o caixa usa o **emissor local** instalado no próprio
+   computador (`http://127.0.0.1:5240`), que assina com o certificado da loja, guarda
+   numa fila e envia as notas à API central quando a conexão volta. Ver
+   [EMISSOR_LOCAL_NFCE.md](EMISSOR_LOCAL_NFCE.md).
+
+A API central recebe as notas do emissor local em:
+
+```
+POST /api/empresas/{empresaId}/nfce/contingencia
+{ "xmlBase64": "<NFe assinada, com infNFeSupl>" }      (ou "xml": "...")
+-> 200 autorizada (com xmlBase64 do nfeProc) | 422 rejeitada ou sem comunicação | 400 XML inválido
+```
+
+Só aceita NFC-e `tpEmis` 9, assinada, com QR Code e do CNPJ da empresa. É idempotente
+pela chave: reenviar a mesma nota devolve o estado atual (ou retransmite).
+
+### Cancelamento por substituição (evento 110112)
+
+Cancela uma NFC-e que foi substituída por outra do mesmo emitente (por exemplo, a
+venda emitida em contingência e também autorizada on-line):
+
+```
+POST /api/nfe/{id}/cancelar-substituicao
+{ "justificativa": "15 a 255 caracteres", "chaveSubstituta": "<chave da NFC-e que substitui>" }
+-> mesmo retorno de /cancelar (homologado, protocoloEvento, ...)
+```
+
+A chave substituta tem de ser de outra NFC-e (modelo 65) do mesmo CNPJ. O XML do
+evento sai em `GET /api/nfe/{id}/cancelamento.xml`, como no cancelamento comum.
+
+### Inutilização da NFC-e
+
+`POST /api/empresas/{empresaId}/inutilizacoes` com `"modelo": 65` agora vai ao
+webservice da **NFC-e** da UF (antes ia ao da NF-e e era recusado).
+
+> **DANFE:** `GET /api/nfe/{id}/danfe.pdf` ainda gera o leiaute A4 da NF-e também para
+> a NFC-e. O cupom (DANFE NFC-e 80 mm) é impresso pelo app a partir do XML
+> (`infNFeSupl/qrCode` e `urlChave`).
+
 ## Cancelamento (evento 110111)
 
 Uma NF-e **autorizada** (status 100) pode ser cancelada dentro do prazo legal
