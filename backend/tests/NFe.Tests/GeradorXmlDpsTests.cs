@@ -61,6 +61,17 @@ public class GeradorXmlDpsTests
         Assert.Equal(esperado, cServ.Element(Ns + "cTribMun")!.Value);
     }
 
+    [Fact]
+    public void TotTrib_MeEpp_UsaPTotTribSN_ENaoIndTotTrib()
+    {
+        // Rejeicao E0712: para ME/EPP o indicador indTotTrib nao pode ser informado.
+        var (xml, _) = Gerar("3534401", null);
+        var totTrib = InfDps(xml).Element(Ns + "valores")!.Element(Ns + "trib")!.Element(Ns + "totTrib")!;
+        Assert.Null(totTrib.Element(Ns + "indTotTrib"));
+        Assert.Null(totTrib.Element(Ns + "pTotTrib"));
+        Assert.Equal("0.00", totTrib.Element(Ns + "pTotTribSN")!.Value);
+    }
+
     // -------------------------------------------------------------- helpers
 
     private static (string Xml, string Id) Gerar(string municipioEmpresa, string? municipioConfig, string? cTribMun = null)

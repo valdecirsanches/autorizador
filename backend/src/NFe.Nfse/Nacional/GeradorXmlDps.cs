@@ -54,7 +54,7 @@ public sealed class GeradorXmlDps
             Prestador(prest, cfg, cnpj),
             Tomador(r.Tomador),
             Servico(r, prest, cfg, cLocEmi),
-            Valores(r.Valores));
+            Valores(r.Valores, cfg));
 
         var dps = new XElement(Ns + "DPS",
             new XAttribute("versao", Versao),
@@ -170,7 +170,7 @@ public sealed class GeradorXmlDps
         return serv;
     }
 
-    private static XElement Valores(ValoresNfseRequest v)
+    private static XElement Valores(ValoresNfseRequest v, Domain.Entities.EmpresaNfseConfig cfg)
     {
         var valores = new XElement(Ns + "valores",
             new XElement(Ns + "vServPrest", El("vServ", Dec(v.ValorServico))));
@@ -206,7 +206,10 @@ public sealed class GeradorXmlDps
         if (federal is not null) trib.Add(federal);
 
         var totTrib = new XElement(Ns + "totTrib");
-        if (v.PercentualTotalTributos is { } pTot && pTot > 0)
+        // ME/EPP do Simples: só pTotTribSN e aceito (E0712 recusa indTotTrib e pTotTrib).
+        if (cfg.OpSimpNac == OpcaoSimplesNacional.OptanteMeEpp)
+            totTrib.Add(El("pTotTribSN", Dec(Math.Clamp(v.PercentualTotalTributosSN ?? v.PercentualTotalTributos ?? 0m, 0m, 100m))));
+        else if (v.PercentualTotalTributos is { } pTot && pTot > 0)
             totTrib.Add(new XElement(Ns + "pTotTrib",
                 El("pTotTribFed", Dec(pTot)),
                 El("pTotTribEst", "0.00"),

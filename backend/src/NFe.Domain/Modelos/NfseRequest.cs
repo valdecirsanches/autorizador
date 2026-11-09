@@ -219,4 +219,12 @@ public sealed class ValoresNfseRequest
     /// 12.741/2012. Se nulo, informa indTotTrib = 0 (nao informado).
     /// </summary>
     public decimal? PercentualTotalTributos { get; set; }
+
+    /// <summary>
+    /// Percentual aproximado dos tributos para optante ME/EPP do Simples
+    /// (pTotTribSN). Para ME/EPP o emissor nacional rejeita indTotTrib e
+    /// pTotTrib (E0712): a DPS leva pTotTribSN. Se nulo, usa
+    /// PercentualTotalTributos; sem nenhum dos dois, 0.00.
+    /// </summary>
+    public decimal? PercentualTotalTributosSN { get; set; }
 }
