@@ -6,8 +6,8 @@ XMLs" configurada no painel, no mesmo padrao que a API usa:
     {destino}/{periodo}/NFe/{chave}-nfe.xml
 
 O {periodo} segue o formato das pastas que ja existem no destino (202610,
-NFe202610, 20261028 ou NFe20261028); sem nenhuma, usa AAAAMM. O mes e o da
-AUTORIZACAO (dhRecbto do protocolo).
+NFe202610, 20261028 ou NFe20261028); sem nenhuma, usa AAAAMM. A data usada e a de
+EMISSAO (dhEmi).
 
 Seguro: so COPIA. Nunca apaga, nunca sobrescreve e pula a nota cuja chave ja
 existe em qualquer lugar do destino. Sem --executar, apenas simula e mostra o
@@ -110,8 +110,8 @@ def main():
     ap.add_argument("--cnpj", required=True, help="CNPJ do emitente (so digitos)")
     ap.add_argument("--destino", required=True, help="Pasta de XMLs configurada no painel")
     ap.add_argument("--origem", action="append", default=[], help="Pasta extra onde procurar (repetivel)")
-    ap.add_argument("--mes", help="So notas autorizadas neste mes, AAAAMM (ex.: 202611)")
-    ap.add_argument("--desde", help="So notas autorizadas a partir desta data, AAAA-MM-DD (ex.: 2026-11-05)")
+    ap.add_argument("--mes", help="So notas emitidas neste mes, AAAAMM (ex.: 202611)")
+    ap.add_argument("--desde", help="So notas emitidas a partir desta data, AAAA-MM-DD (ex.: 2026-11-05)")
     ap.add_argument("--executar", action="store_true", help="Copia de verdade (sem isto, so simula)")
     a = ap.parse_args()
 
@@ -155,9 +155,9 @@ def main():
                     ignoradas["homologacao"] += 1
                 elif n["cStat"] not in ("100", "150"):
                     ignoradas["nao autorizada"] += 1
-                elif a.desde and (n["dhRecbto"] or n["dhEmi"])[:10] < a.desde:
+                elif a.desde and (n["dhEmi"] or n["dhRecbto"])[:10] < a.desde:
                     ignoradas["antes de --desde"] += 1
-                elif a.mes and (n["dhRecbto"] or n["dhEmi"])[:7].replace("-", "") != a.mes:
+                elif a.mes and (n["dhEmi"] or n["dhRecbto"])[:7].replace("-", "") != a.mes:
                     ignoradas["outro mes"] += 1
                 elif n["chave"] in ja_existem:
                     ignoradas["ja no destino"] += 1
@@ -165,7 +165,7 @@ def main():
                     ignoradas["repetida"] += 1
                 else:
                     vistas.add(n["chave"])
-                    data = (n["dhRecbto"] or n["dhEmi"])[:10]  # AAAA-MM-DD no fuso do proprio XML
+                    data = (n["dhEmi"] or n["dhRecbto"])[:10]  # AAAA-MM-DD no fuso do proprio XML
                     periodo = prefixo + data.replace("-", "")[: 8 if por_dia else 6]
                     alvo = os.path.join(raiz, periodo, "NFe", n["chave"] + "-nfe.xml")
                     copiar.append((alvo, n["dados"], os.path.join(base, nome)))

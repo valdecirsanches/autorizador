@@ -133,7 +133,7 @@ export function ConfigPastaXml({
           ) : null}
           <div className="mt-2 flex items-center gap-2">
             <Label htmlFor={`desde-${empresa.id}`} className="whitespace-nowrap text-sm">
-              Copiar notas autorizadas desde
+              Copiar notas emitidas desde
             </Label>
             <Input
               id={`desde-${empresa.id}`}

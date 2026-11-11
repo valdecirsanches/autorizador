@@ -406,7 +406,7 @@ public static class EmpresaEndpoints
         g.MapPost("/{id:guid}/pasta-xml/exportar", async (
             Guid id, DateTime? desde, NFeDbContext db, ILoggerFactory lf, CancellationToken ct) =>
         {
-            // ?desde=AAAA-MM-DD: so notas autorizadas (ou emitidas) a partir da data.
+            // ?desde=AAAA-MM-DD: so notas emitidas a partir da data.
             var desdeUtc = desde?.Date.ToUniversalTime();
             var e = await db.Empresas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
             if (e is null) return Results.NotFound(new { erro = "Empresa nao encontrada." });
@@ -429,7 +429,7 @@ public static class EmpresaEndpoints
                                 && (d.Status == StatusDocumento.Autorizado || d.Status == StatusDocumento.Cancelado)
                                 && d.XmlProtocolado != null);
                 if (desdeUtc is { } du)
-                    q = q.Where(d => (d.DataAutorizacao ?? d.DataEmissao) >= du);
+                    q = q.Where(d => d.DataEmissao >= du);
                 var docs = await q.OrderBy(d => d.Id).Skip(pular).Take(lote)
                     .Select(d => new DocumentoFiscal
                     {

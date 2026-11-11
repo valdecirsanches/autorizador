@@ -41,9 +41,8 @@ public static class GravadorPastaXml
 
         try
         {
-            // O backup organiza por periodo de autorizacao (cai no mes seguinte
-            // quando a nota e autorizada depois da virada).
-            var data = (doc.DataAutorizacao ?? doc.DataEmissao).ToLocalTime();
+            // Organizado pela data de EMISSAO da nota (horario de Brasilia).
+            var data = doc.DataEmissao.ToLocalTime();
             var dir = LocalizadorXmlPasta.PastaParaGravar(pasta, cnpj, data);
             if (dir is null)
             {
