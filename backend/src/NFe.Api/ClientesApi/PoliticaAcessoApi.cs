@@ -76,7 +76,8 @@ public static class PoliticaAcessoApi
                 "Esta rota lista/recebe certificados de todas as empresas. "
                 + "Use /api/certificados/empresa/{empresaId}.");
         if (p.EndsWith("/pasta-xml", StringComparison.Ordinal)
-            || p.EndsWith("/pasta-xml/diagnostico", StringComparison.Ordinal))
+            || p.EndsWith("/pasta-xml/diagnostico", StringComparison.Ordinal)
+            || p.EndsWith("/pasta-xml/exportar", StringComparison.Ordinal))
             return RegraAcesso.Mestre(
                 "A pasta de XML aponta para o disco do servidor; so o token mestre configura.");
         if (delete && segmentos is ["api", "empresas", _])

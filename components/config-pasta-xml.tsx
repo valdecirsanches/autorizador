@@ -1,9 +1,9 @@
 "use client"
 
 import { useState } from "react"
-import { FolderSearch, Save } from "lucide-react"
+import { CopyPlus, FolderSearch, Save } from "lucide-react"
 import { toast } from "sonner"
-import { fetcher, putJson } from "@/lib/api"
+import { fetcher, postJson, putJson } from "@/lib/api"
 import type { DiagnosticoPastaXml, Empresa } from "@/lib/types"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -37,6 +37,8 @@ export function ConfigPastaXml({
   const [pasta, setPasta] = useState(empresa.pastaXmlBackup ?? "")
   const [salvando, setSalvando] = useState(false)
   const [testando, setTestando] = useState(false)
+  const [copiando, setCopiando] = useState(false)
+  const [resultadoCopia, setResultadoCopia] = useState<ResultadoCopia | null>(null)
   const [diag, setDiag] = useState<DiagnosticoPastaXml | null>(null)
 
   async function salvar() {
@@ -71,7 +73,27 @@ export function ConfigPastaXml({
     }
   }
 
-  const ocupado = salvando || testando
+  /** Salva a pasta e grava nela o XML de todas as notas de producao ja autorizadas. */
+  async function copiarNotas() {
+    setCopiando(true)
+    setResultadoCopia(null)
+    try {
+      await putJson(`empresas/${empresa.id}/pasta-xml`, { pasta: pasta.trim() })
+      const r = await postJson<ResultadoCopia>(`empresas/${empresa.id}/pasta-xml/exportar`, {})
+      setResultadoCopia(r)
+      onSalvo()
+      if (r.erros > 0) toast.warning("Cópia concluída com erros", { description: r.mensagem })
+      else toast.success("Notas copiadas para a pasta", { description: r.mensagem })
+    } catch (e) {
+      toast.error("Não foi possível copiar as notas", {
+        description: e instanceof Error ? e.message : undefined,
+      })
+    } finally {
+      setCopiando(false)
+    }
+  }
+
+  const ocupado = salvando || testando || copiando
 
   return (
     <Dialog open={aberto} onOpenChange={(o) => (!o && !ocupado ? onFechar() : undefined)}>
@@ -81,7 +103,8 @@ export function ConfigPastaXml({
           <DialogDescription>
             Caminho completo, no servidor da API, da pasta do CNPJ que contém as subpastas por período
             (NFe202610, NFe20261028 ou 202610…), cada uma com NFe e Evento. Só a subpasta NFe é lida para
-            achar o XML da nota. Deixe vazio para remover.
+            achar o XML da nota. As notas autorizadas em produção também são gravadas aqui
+            ({"{período}"}/NFe/{"{chave}"}-nfe.xml), sem sobrescrever arquivos. Deixe vazio para remover.
           </DialogDescription>
         </DialogHeader>
 
@@ -106,11 +129,25 @@ export function ConfigPastaXml({
               {diag.mensagem}
             </p>
           ) : null}
+          {resultadoCopia ? (
+            <p role="status" className={`text-sm ${resultadoCopia.erros > 0 ? "text-amber-500" : "text-emerald-500"}`}>
+              {resultadoCopia.total} nota(s) de produção: {resultadoCopia.mensagem}
+            </p>
+          ) : null}
         </div>
 
         <DialogFooter>
           <Button variant="outline" onClick={onFechar} disabled={ocupado}>
             Voltar
+          </Button>
+          <Button
+            variant="outline"
+            onClick={copiarNotas}
+            disabled={ocupado || !pasta.trim()}
+            title="Grava na pasta o XML de todas as notas de produção já autorizadas (não sobrescreve)"
+          >
+            {copiando ? <Spinner data-icon="inline-start" /> : <CopyPlus data-icon="inline-start" />}
+            Copiar notas para a pasta
           </Button>
           <Button variant="outline" onClick={testar} disabled={ocupado || !pasta.trim()}>
             {testando ? <Spinner data-icon="inline-start" /> : <FolderSearch data-icon="inline-start" />}
@@ -124,4 +161,14 @@ export function ConfigPastaXml({
       </DialogContent>
     </Dialog>
   )
+}
+
+type ResultadoCopia = {
+  pasta: string
+  total: number
+  gravados: number
+  jaExistiam: number
+  erros: number
+  exemplosErro: string[]
+  mensagem: string
 }

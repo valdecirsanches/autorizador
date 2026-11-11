@@ -129,6 +129,48 @@ public static class LocalizadorXmlPasta
     }
 
     /// <summary>
+    /// Pasta onde gravar o XML de uma nota emitida pela API, no mesmo padrao da
+    /// pasta configurada: {raiz}/{periodo}/NFe. O periodo segue o formato das
+    /// pastas que ja existem (AAAAMM, AAAAMMDD, NFeAAAAMM ou NFeAAAAMMDD); sem
+    /// nenhuma, usa AAAAMM. A raiz e a que ja contem periodos (a pasta informada,
+    /// sua subpasta NFe ou a pasta do CNPJ); sem periodos, a propria pasta.
+    /// Null quando a pasta e invalida.
+    /// </summary>
+    public static string? PastaParaGravar(string pasta, string cnpj, DateTime data)
+    {
+        if (Validar(pasta) is not null) return null;
+        var completo = Normalizar(pasta);
+        if (completo is null) return null;
+
+        string raiz = completo;
+        PastaPeriodo? modelo = null;
+        if (Directory.Exists(completo))
+        {
+            foreach (var r in Raizes(pasta, SoDigitosCnpj(cnpj)))
+            {
+                var periodos = ListarPeriodos(r);
+                if (periodos.Count == 0) continue;
+                raiz = r;
+                modelo = periodos[0];
+                break;
+            }
+        }
+
+        var nomeModelo = modelo is null ? "" : Path.GetFileName(modelo.Caminho);
+        var prefixo = nomeModelo.StartsWith("nfe", StringComparison.OrdinalIgnoreCase) ? nomeModelo[..3] : "";
+        // Ordem = AAAAMM + dia, ou AAAAMM + "99" quando a pasta e mensal.
+        var porDia = modelo is not null && !modelo.Ordem.EndsWith("99", StringComparison.Ordinal);
+        var periodo = prefixo + data.ToString(porDia ? "yyyyMMdd" : "yyyyMM", System.Globalization.CultureInfo.InvariantCulture);
+        return Path.Combine(raiz, periodo, "NFe");
+    }
+
+    private static string? SoDigitosCnpj(string? cnpj)
+    {
+        var d = new string((cnpj ?? "").Where(char.IsDigit).ToArray());
+        return d.Length == 14 ? d : null;
+    }
+
+    /// <summary>
     /// Caminho absoluto normalizado. Se o usuario colou o modelo com {...} ou um exemplo
     /// concreto (.../NFe202610 ou .../NFe202610/NFe), sobe ate a pasta que contem os periodos.
     /// </summary>

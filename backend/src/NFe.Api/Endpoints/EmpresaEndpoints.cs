@@ -398,6 +398,76 @@ public static class EmpresaEndpoints
             return Results.Ok(diag);
         });
 
+        // Copia para a pasta configurada o XML autorizado (nfeProc) de TODAS as
+        // notas de producao da empresa que estao no banco (autorizadas e
+        // canceladas), no padrao {pasta}/{periodo}/NFe/{chave}-nfe.xml. Nao
+        // sobrescreve: arquivos existentes contam como "jaExistiam". Pode ser
+        // repetido com seguranca.
+        g.MapPost("/{id:guid}/pasta-xml/exportar", async (
+            Guid id, NFeDbContext db, ILoggerFactory lf, CancellationToken ct) =>
+        {
+            var e = await db.Empresas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
+            if (e is null) return Results.NotFound(new { erro = "Empresa nao encontrada." });
+            if (string.IsNullOrWhiteSpace(e.PastaXmlBackup))
+                return Results.UnprocessableEntity(new { erro = "Nenhuma pasta de XML configurada." });
+
+            var log = lf.CreateLogger("ExportarPastaXml");
+            int gravados = 0, jaExistiam = 0, erros = 0, total = 0;
+            var exemplosErro = new List<string>();
+            var pular = 0;
+            const int lote = 200;
+            while (true)
+            {
+                var q = db.DocumentosFiscais.AsNoTracking()
+                    .Where(d => d.EmpresaId == id
+                                && d.Ambiente == TipoAmbiente.Producao
+                                && (d.Status == StatusDocumento.Autorizado || d.Status == StatusDocumento.Cancelado)
+                                && d.XmlProtocolado != null);
+                var docs = await q.OrderBy(d => d.Id).Skip(pular).Take(lote)
+                    .Select(d => new DocumentoFiscal
+                    {
+                        Id = d.Id,
+                        ChaveAcesso = d.ChaveAcesso,
+                        Ambiente = d.Ambiente,
+                        Status = d.Status,
+                        XmlProtocolado = d.XmlProtocolado,
+                        DataEmissao = d.DataEmissao,
+                        DataAutorizacao = d.DataAutorizacao
+                    })
+                    .ToListAsync(ct);
+                if (docs.Count == 0) break;
+
+                foreach (var d in docs)
+                {
+                    total++;
+                    switch (GravadorPastaXml.Gravar(e.PastaXmlBackup, e.Cnpj, d, log, out _))
+                    {
+                        case ResultadoGravacaoPasta.Gravado: gravados++; break;
+                        case ResultadoGravacaoPasta.JaExistia: jaExistiam++; break;
+                        case ResultadoGravacaoPasta.Erro:
+                            erros++;
+                            if (exemplosErro.Count < 5) exemplosErro.Add(d.ChaveAcesso ?? d.Id.ToString());
+                            break;
+                    }
+                }
+                pular += docs.Count;
+                if (docs.Count < lote) break;
+            }
+
+            return Results.Ok(new
+            {
+                pasta = e.PastaXmlBackup,
+                total,
+                gravados,
+                jaExistiam,
+                erros,
+                exemplosErro,
+                mensagem = erros > 0
+                    ? $"{gravados} gravada(s), {jaExistiam} ja existia(m), {erros} com erro (veja o log da API: [XML])."
+                    : $"{gravados} gravada(s), {jaExistiam} ja existia(m)."
+            });
+        });
+
         // -------------------------------------------------------------------
         // Lista os contadores de numeracao da empresa (por modelo, serie e
         // ambiente). Serve de base para a tela de inicializacao de numeracao.

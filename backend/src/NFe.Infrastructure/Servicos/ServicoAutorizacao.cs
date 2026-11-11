@@ -367,7 +367,12 @@ public sealed class ServicoAutorizacao
                 // autorizacao. Se autorizada, salva tambem o nfeProc definitivo.
                 _arquivador?.SalvarRetornoSefaz(empresa, documento);
                 if (documento.Status == StatusDocumento.Autorizado)
+                {
                     _arquivador?.SalvarAutorizado(empresa, documento);
+                    // Producao: copia o nfeProc para a "Pasta de XMLs" da empresa
+                    // (backup no padrao do EDS), sem sobrescrever.
+                    GravadorPastaXml.Gravar(empresa, documento, _log);
+                }
                 return;
             }
             catch (Exception ex) when (
