@@ -415,7 +415,7 @@ public static class EmissaoEndpoints
 
             var xml = doc.XmlProtocolado ?? doc.XmlAssinado;
             if (string.IsNullOrEmpty(doc.XmlProtocolado) && PrecisaXmlDaPasta(doc))
-                xml = await consulta.TentarCompletarDaPastaAsync(doc.EmpresaId, doc.ChaveAcesso!, ct) ?? xml;
+                xml = await consulta.RecuperarXmlAsync(doc.EmpresaId, doc.ChaveAcesso!, ct) ?? xml;
             if (string.IsNullOrEmpty(xml))
                 return Results.NotFound(new { erro = "Documento ainda sem XML." });
 
@@ -424,6 +424,33 @@ public static class EmissaoEndpoints
                 System.Text.Encoding.UTF8.GetBytes(xml),
                 "application/xml", nome);
         });
+
+        // -------------------------------------------------------------------
+        // Recupera o XML autorizado de uma nota que esta sem ele: pasta
+        // configurada ou, se nao estiver la, XML assinado da base + protocolo
+        // consultado na SEFAZ. Guarda na base e grava na pasta da empresa.
+        // -------------------------------------------------------------------
+        g.MapPost("/nfe/{id:guid}/recuperar-xml", async (
+            Guid id, NFeDbContext db, ServicoConsultaProtocolo consulta, CancellationToken ct) =>
+        {
+            var doc = await db.DocumentosFiscais.AsNoTracking().FirstOrDefaultAsync(d => d.Id == id, ct);
+            if (doc is null) return Results.NotFound(new { erro = "Documento nao encontrado." });
+            if (!string.IsNullOrEmpty(doc.XmlProtocolado))
+                return Results.Ok(new { recuperado = false, jaTinha = true, mensagem = "A nota ja tem o XML autorizado." });
+            if (!PrecisaXmlDaPasta(doc))
+                return Results.UnprocessableEntity(new { erro = "So notas autorizadas ou canceladas tem XML autorizado." });
+
+            var xml = await consulta.RecuperarXmlAsync(doc.EmpresaId, doc.ChaveAcesso!, ct);
+            return xml is null
+                ? Results.UnprocessableEntity(new
+                {
+                    erro = "Nao foi possivel recuperar o XML: nao esta na pasta configurada e a SEFAZ nao " +
+                           "confirmou a nota (ou a API nao tem o XML assinado). Veja o log da API: [XML]."
+                })
+                : Results.Ok(new { recuperado = true, jaTinha = false, mensagem = "XML recuperado e gravado." });
+        })
+        .WithName("RecuperarXmlNFe")
+        .DisableAntiforgery();
 
         // -------------------------------------------------------------------
         // Gera e baixa o DANFE em PDF a partir do XML autorizado. O DANFE NAO vem
@@ -445,7 +472,7 @@ public static class EmissaoEndpoints
 
             var xml = doc.XmlProtocolado ?? doc.XmlAssinado;
             if (string.IsNullOrEmpty(doc.XmlProtocolado) && PrecisaXmlDaPasta(doc))
-                xml = await consulta.TentarCompletarDaPastaAsync(doc.EmpresaId, doc.ChaveAcesso!, ct) ?? xml;
+                xml = await consulta.RecuperarXmlAsync(doc.EmpresaId, doc.ChaveAcesso!, ct) ?? xml;
             if (string.IsNullOrEmpty(xml))
                 return Results.NotFound(new { erro = "Documento ainda sem XML para gerar o DANFE." });
 

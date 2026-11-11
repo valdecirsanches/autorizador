@@ -314,6 +314,46 @@ public sealed class ServicoConsultaProtocolo
     }
 
     /// <summary>
+    /// Obtem o XML autorizado (nfeProc) de uma nota autorizada/cancelada que esta
+    /// sem ele na base, nesta ordem:
+    /// 1) a "Pasta de XMLs" configurada na empresa;
+    /// 2) o XML ASSINADO que a propria API guardou ao emitir + o protocolo
+    ///    consultado agora na SEFAZ (a SEFAZ nao devolve a nota inteira, so o
+    ///    protocolo; com os dois, o nfeProc e remontado).
+    /// O resultado fica na base e, no caso 2, tambem e gravado na pasta
+    /// configurada. Devolve null quando nao foi possivel.
+    /// </summary>
+    public async Task<string?> RecuperarXmlAsync(Guid empresaId, string chave, CancellationToken ct = default)
+    {
+        var xml = await TentarCompletarDaPastaAsync(empresaId, chave, ct);
+        if (xml is not null) return xml;
+
+        var assinado = await _db.DocumentosFiscais.AsNoTracking()
+            .Where(d => d.EmpresaId == empresaId && d.ChaveAcesso == chave)
+            .Select(d => d.XmlAssinado)
+            .FirstOrDefaultAsync(ct);
+        if (string.IsNullOrWhiteSpace(assinado)) return null;
+
+        try
+        {
+            var r = await AnexarXmlAsync(empresaId, chave, assinado, ct: ct);
+            xml = r.Documento.XmlProtocolado;
+            if (xml is null) return null;
+            _log?.LogInformation(
+                "[XML] {Chave}: nfeProc remontado com o XML assinado da base e o protocolo da SEFAZ.", chave);
+
+            var empresa = await _db.Empresas.AsNoTracking().FirstOrDefaultAsync(e => e.Id == empresaId, ct);
+            if (empresa is not null) GravadorPastaXml.Gravar(empresa, r.Documento, _log);
+            return xml;
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException)
+        {
+            _log?.LogWarning("[XML] {Chave}: nao foi possivel recuperar o XML pela SEFAZ: {Erro}", chave, ex.Message);
+            return null;
+        }
+    }
+
+    /// <summary>
     /// Anexa o XML de uma NF-e (NFe assinada ou nfeProc) a uma nota ja autorizada.
     /// A SEFAZ nao devolve o XML na consulta e nao o entrega ao emitente pela
     /// distribuicao DF-e, entao e a unica forma de a API ter XML e DANFE de uma nota

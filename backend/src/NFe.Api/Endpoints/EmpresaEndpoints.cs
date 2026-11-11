@@ -404,7 +404,8 @@ public static class EmpresaEndpoints
         // sobrescreve: arquivos existentes contam como "jaExistiam". Pode ser
         // repetido com seguranca.
         g.MapPost("/{id:guid}/pasta-xml/exportar", async (
-            Guid id, DateTime? desde, NFeDbContext db, ILoggerFactory lf, CancellationToken ct) =>
+            Guid id, DateTime? desde, NFeDbContext db, ServicoConsultaProtocolo consulta,
+            ILoggerFactory lf, CancellationToken ct) =>
         {
             // ?desde=AAAA-MM-DD: so notas emitidas a partir da data.
             var desdeUtc = desde?.Date.ToUniversalTime();
@@ -467,17 +468,43 @@ public static class EmpresaEndpoints
                 if (docs.Count < lote) break;
             }
 
+            // Notas autorizadas/canceladas SEM o nfeProc na base: tenta remontar com
+            // o XML assinado guardado + protocolo da SEFAZ (grava na pasta tambem).
+            var semXml = await db.DocumentosFiscais.AsNoTracking()
+                .Where(d => d.EmpresaId == id
+                            && d.Ambiente == TipoAmbiente.Producao
+                            && (d.Status == StatusDocumento.Autorizado || d.Status == StatusDocumento.Cancelado)
+                            && d.XmlProtocolado == null
+                            && d.ChaveAcesso != null
+                            && (desdeUtc == null || d.DataEmissao >= desdeUtc))
+                .Select(d => d.ChaveAcesso!)
+                .ToListAsync(ct);
+            var recuperados = 0;
+            foreach (var ch in semXml)
+            {
+                total++;
+                if (chavesNaPasta.Contains(ch)) { jaExistiam++; continue; }
+                if (await consulta.RecuperarXmlAsync(id, ch, ct) is not null) { recuperados++; gravados++; }
+                else
+                {
+                    erros++;
+                    if (exemplosErro.Count < 5) exemplosErro.Add(ch);
+                }
+            }
+
             return Results.Ok(new
             {
                 pasta = e.PastaXmlBackup,
                 total,
+                recuperadosNaSefaz = recuperados,
                 gravados,
                 jaExistiam,
                 erros,
                 exemplosErro,
                 mensagem = erros > 0
-                    ? $"{gravados} gravada(s), {jaExistiam} ja existia(m), {erros} com erro (veja o log da API: [XML])."
-                    : $"{gravados} gravada(s), {jaExistiam} ja existia(m)."
+                    ? $"{gravados} gravada(s) ({recuperados} recuperada(s) na SEFAZ), {jaExistiam} ja existia(m), " +
+                      $"{erros} sem XML (veja o log da API: [XML])."
+                    : $"{gravados} gravada(s) ({recuperados} recuperada(s) na SEFAZ), {jaExistiam} ja existia(m)."
             });
         });
 
