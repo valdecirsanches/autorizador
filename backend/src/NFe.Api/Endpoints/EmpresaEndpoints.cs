@@ -404,14 +404,19 @@ public static class EmpresaEndpoints
         // sobrescreve: arquivos existentes contam como "jaExistiam". Pode ser
         // repetido com seguranca.
         g.MapPost("/{id:guid}/pasta-xml/exportar", async (
-            Guid id, NFeDbContext db, ILoggerFactory lf, CancellationToken ct) =>
+            Guid id, DateTime? desde, NFeDbContext db, ILoggerFactory lf, CancellationToken ct) =>
         {
+            // ?desde=AAAA-MM-DD: so notas autorizadas (ou emitidas) a partir da data.
+            var desdeUtc = desde?.Date.ToUniversalTime();
             var e = await db.Empresas.AsNoTracking().FirstOrDefaultAsync(x => x.Id == id, ct);
             if (e is null) return Results.NotFound(new { erro = "Empresa nao encontrada." });
             if (string.IsNullOrWhiteSpace(e.PastaXmlBackup))
                 return Results.UnprocessableEntity(new { erro = "Nenhuma pasta de XML configurada." });
 
             var log = lf.CreateLogger("ExportarPastaXml");
+            var pastaEmpresa = e.PastaXmlBackup;
+            // Chaves que ja estao na pasta (em qualquer mes), pelo nome dos arquivos.
+            var chavesNaPasta = await Task.Run(() => LocalizadorXmlPasta.ChavesPresentes(pastaEmpresa), ct);
             int gravados = 0, jaExistiam = 0, erros = 0, total = 0;
             var exemplosErro = new List<string>();
             var pular = 0;
@@ -423,6 +428,8 @@ public static class EmpresaEndpoints
                                 && d.Ambiente == TipoAmbiente.Producao
                                 && (d.Status == StatusDocumento.Autorizado || d.Status == StatusDocumento.Cancelado)
                                 && d.XmlProtocolado != null);
+                if (desdeUtc is { } du)
+                    q = q.Where(d => (d.DataAutorizacao ?? d.DataEmissao) >= du);
                 var docs = await q.OrderBy(d => d.Id).Skip(pular).Take(lote)
                     .Select(d => new DocumentoFiscal
                     {
@@ -440,6 +447,12 @@ public static class EmpresaEndpoints
                 foreach (var d in docs)
                 {
                     total++;
+                    // Ja esta na pasta (gravada pelo emissor, em qualquer mes)? Nao duplica.
+                    if (d.ChaveAcesso is { Length: 44 } ch && chavesNaPasta.Contains(ch))
+                    {
+                        jaExistiam++;
+                        continue;
+                    }
                     switch (GravadorPastaXml.Gravar(e.PastaXmlBackup, e.Cnpj, d, log, out _))
                     {
                         case ResultadoGravacaoPasta.Gravado: gravados++; break;

@@ -39,6 +39,7 @@ export function ConfigPastaXml({
   const [testando, setTestando] = useState(false)
   const [copiando, setCopiando] = useState(false)
   const [resultadoCopia, setResultadoCopia] = useState<ResultadoCopia | null>(null)
+  const [desde, setDesde] = useState("")
   const [diag, setDiag] = useState<DiagnosticoPastaXml | null>(null)
 
   async function salvar() {
@@ -79,7 +80,8 @@ export function ConfigPastaXml({
     setResultadoCopia(null)
     try {
       await putJson(`empresas/${empresa.id}/pasta-xml`, { pasta: pasta.trim() })
-      const r = await postJson<ResultadoCopia>(`empresas/${empresa.id}/pasta-xml/exportar`, {})
+      const filtro = desde ? `?desde=${encodeURIComponent(desde)}` : ""
+      const r = await postJson<ResultadoCopia>(`empresas/${empresa.id}/pasta-xml/exportar${filtro}`, {})
       setResultadoCopia(r)
       onSalvo()
       if (r.erros > 0) toast.warning("Cópia concluída com erros", { description: r.mensagem })
@@ -129,6 +131,20 @@ export function ConfigPastaXml({
               {diag.mensagem}
             </p>
           ) : null}
+          <div className="mt-2 flex items-center gap-2">
+            <Label htmlFor={`desde-${empresa.id}`} className="whitespace-nowrap text-sm">
+              Copiar notas autorizadas desde
+            </Label>
+            <Input
+              id={`desde-${empresa.id}`}
+              type="date"
+              value={desde}
+              onChange={(e) => setDesde(e.target.value)}
+              className="w-44"
+              disabled={ocupado}
+            />
+            <span className="text-xs text-muted-foreground">(vazio = todas)</span>
+          </div>
           {resultadoCopia ? (
             <p role="status" className={`text-sm ${resultadoCopia.erros > 0 ? "text-amber-500" : "text-emerald-500"}`}>
               {resultadoCopia.total} nota(s) de produção: {resultadoCopia.mensagem}

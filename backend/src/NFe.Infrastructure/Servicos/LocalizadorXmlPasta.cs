@@ -164,6 +164,23 @@ public static class LocalizadorXmlPasta
         return Path.Combine(raiz, periodo, "NFe");
     }
 
+    private static readonly Regex Chave44 = new(@"\d{44}", RegexOptions.Compiled);
+
+    /// <summary>Chaves (44 digitos) presentes nos nomes dos XMLs da pasta, em qualquer subpasta.</summary>
+    public static HashSet<string> ChavesPresentes(string? pasta)
+    {
+        var chaves = new HashSet<string>(StringComparer.Ordinal);
+        if (string.IsNullOrWhiteSpace(pasta)) return chaves;
+        var completo = Normalizar(pasta);
+        if (completo is null || !Directory.Exists(completo)) return chaves;
+        foreach (var arq in Enumerar(completo, "*.xml", ComRecursao))
+        {
+            var m = Chave44.Match(Path.GetFileName(arq));
+            if (m.Success) chaves.Add(m.Value);
+        }
+        return chaves;
+    }
+
     private static string? SoDigitosCnpj(string? cnpj)
     {
         var d = new string((cnpj ?? "").Where(char.IsDigit).ToArray());
