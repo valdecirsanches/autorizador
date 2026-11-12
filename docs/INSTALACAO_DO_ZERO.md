@@ -137,6 +137,15 @@ sudo certbot --nginx -d painel.seudominio.com.br -d api.seudominio.com.br
 
 ## Atualizar depois (cada deploy)
 
+Nos servidores com os servicos `nfe-api` e `nfe-app`, um comando faz tudo (baixa,
+compila, reinicia e confere a versao; se o build falhar, nada no ar e alterado):
+
+```bash
+~/apps/autorizador/deploy/atualizar.sh            # --forcar, --so-api, --so-painel
+```
+
+Instalacao com os servicos `aprovador-nfe`/`aprovador-painel`:
+
 ```bash
 cd ~/autorizador && git pull
 (cd backend && sudo bash deploy/instalar-servico.sh)
