@@ -798,6 +798,133 @@ public static class EmissaoEndpoints
         .WithName("AnexarXmlNFe")
         .DisableAntiforgery();
 
+        // -------------------------------------------------------------------
+        // Importa NF-e/NFC-e pelo XML (NFe assinada ou nfeProc). A chave vem do
+        // proprio XML. Aceita:
+        //   - multipart/form-data com um ou mais arquivos .xml (qualquer campo);
+        //   - corpo application/xml ou text/xml com o XML;
+        //   - JSON { "xml": "..." } ou { "xmlBase64": "..." }.
+        // Cada nota e conferida (assinatura, emitente = empresa) e confirmada na
+        // SEFAZ; se nao existir na base, e cadastrada. O nfeProc fica na base e,
+        // em producao, e gravado na pasta configurada da empresa. Responde com o
+        // resultado de cada arquivo (uma nota com erro nao impede as outras).
+        // -------------------------------------------------------------------
+        g.MapPost("/empresas/{empresaId:guid}/nfe/importar", async (
+            Guid empresaId,
+            HttpRequest http,
+            ServicoConsultaProtocolo servico,
+            NFeDbContext db,
+            ILoggerFactory loggerFactory,
+            CancellationToken ct) =>
+        {
+            const long limiteArquivo = 5 * 1024 * 1024;
+            const int limiteArquivos = 500;
+            var entradas = new List<(string Nome, string? Xml, string? Erro)>();
+
+            try
+            {
+                if (http.HasFormContentType)
+                {
+                    var form = await http.ReadFormAsync(ct);
+                    if (form.Files.Count == 0)
+                        return Results.BadRequest(new { erro = "Envie ao menos um arquivo .xml." });
+                    if (form.Files.Count > limiteArquivos)
+                        return Results.BadRequest(new { erro = $"No maximo {limiteArquivos} arquivos por envio." });
+                    foreach (var f in form.Files)
+                    {
+                        if (f.Length > limiteArquivo)
+                        {
+                            entradas.Add((f.FileName, null, "Arquivo maior que 5 MB."));
+                            continue;
+                        }
+                        using var leitor = new StreamReader(f.OpenReadStream(), System.Text.Encoding.UTF8);
+                        entradas.Add((f.FileName, await leitor.ReadToEndAsync(ct), null));
+                    }
+                }
+                else
+                {
+                    using var leitor = new StreamReader(http.Body, System.Text.Encoding.UTF8);
+                    var corpo = await leitor.ReadToEndAsync(ct);
+                    var tipo = http.ContentType ?? "";
+                    if (tipo.Contains("json", StringComparison.OrdinalIgnoreCase))
+                    {
+                        var j = System.Text.Json.JsonSerializer.Deserialize<Contratos.ContingenciaNfceRequest>(
+                            corpo, new System.Text.Json.JsonSerializerOptions(System.Text.Json.JsonSerializerDefaults.Web));
+                        var xml = j?.Xml;
+                        if (string.IsNullOrWhiteSpace(xml) && !string.IsNullOrWhiteSpace(j?.XmlBase64))
+                            xml = System.Text.Encoding.UTF8.GetString(Convert.FromBase64String(j.XmlBase64));
+                        entradas.Add(("json", xml, null));
+                    }
+                    else
+                    {
+                        entradas.Add(("corpo", corpo, null));
+                    }
+                }
+            }
+            catch (Exception ex) when (ex is FormatException or System.Text.Json.JsonException or InvalidDataException)
+            {
+                return Results.BadRequest(new { erro = "Nao foi possivel ler o envio: " + ex.Message });
+            }
+
+            if (entradas.All(e => string.IsNullOrWhiteSpace(e.Xml) && e.Erro is null))
+                return Results.BadRequest(new { erro = "Nenhum XML recebido. Envie arquivos .xml, o XML no corpo ou { \"xml\": \"...\" }." });
+
+            var empresa = await db.Empresas.AsNoTracking().FirstOrDefaultAsync(e => e.Id == empresaId, ct);
+            if (empresa is null) return Results.NotFound(new { erro = "Empresa nao encontrada." });
+            var logPasta = loggerFactory.CreateLogger("ImportarNFe");
+
+            var resultados = new List<object>();
+            var importadas = 0;
+            foreach (var (nome, xml, erroLeitura) in entradas)
+            {
+                if (erroLeitura is not null || string.IsNullOrWhiteSpace(xml))
+                {
+                    resultados.Add(new { arquivo = nome, ok = false, erro = erroLeitura ?? "Arquivo vazio." });
+                    continue;
+                }
+                var m = System.Text.RegularExpressions.Regex.Match(xml, "Id=\"NFe(\\d{44})\"");
+                if (!m.Success)
+                {
+                    resultados.Add(new { arquivo = nome, ok = false, erro = "Nao e o XML de uma NF-e/NFC-e (sem infNFe Id=\"NFe...\")." });
+                    continue;
+                }
+                var chave = m.Groups[1].Value;
+                try
+                {
+                    var r = await servico.AnexarXmlAsync(empresaId, chave, xml, ct: ct);
+                    var doc = r.Documento;
+                    if (!string.IsNullOrEmpty(doc.XmlProtocolado))
+                        GravadorPastaXml.Gravar(empresa, doc, logPasta);
+                    importadas++;
+                    resultados.Add(new
+                    {
+                        arquivo = nome,
+                        ok = true,
+                        chave,
+                        documentoId = doc.Id,
+                        numero = doc.Numero,
+                        serie = doc.Serie,
+                        modelo = (int)doc.Modelo,
+                        status = (int)doc.Status,
+                        cadastradaAgora = r.CadastradaAgora,
+                        aviso = r.Aviso
+                    });
+                }
+                catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or CertificadoException
+                                               or SefazEndpointException or SefazSoapException)
+                {
+                    resultados.Add(new { arquivo = nome, ok = false, chave, erro = ex.Message });
+                }
+            }
+
+            var corpoResposta = new { recebidos = entradas.Count, importadas, falhas = entradas.Count - importadas, resultados };
+            return importadas > 0 || entradas.Count == 0
+                ? Results.Ok(corpoResposta)
+                : Results.UnprocessableEntity(corpoResposta);
+        })
+        .WithName("ImportarNFePorXml")
+        .DisableAntiforgery();
+
         // Procura o XML da chave na pasta de backup configurada na empresa
         // (AAAAMM/NFe) e o anexa a nota, sem o front precisar enviar o arquivo.
         g.MapPost("/empresas/{empresaId:guid}/nfe/xml/buscar-pasta", async (

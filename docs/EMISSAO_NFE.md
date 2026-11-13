@@ -1115,6 +1115,39 @@ Limites:
 - Consulte uma vez por chave e guarde o resultado. Consultas repetidas em
   sequência geram `656 Consumo Indevido`.
 
+### Importar NF-e pelo XML
+
+Insere notas na API a partir do XML (NFe assinada ou `nfeProc`). A chave sai do
+próprio XML; vários arquivos podem ir de uma vez.
+
+```bash
+# um ou mais arquivos
+curl -X POST "$API/api/empresas/{empresaId}/nfe/importar" -H "Authorization: Bearer $TOKEN" \
+  -F "xml=@3526...-nfe.xml" -F "xml=@3526...-procNFe.xml"
+
+# o XML direto no corpo
+curl -X POST "$API/api/empresas/{empresaId}/nfe/importar" -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/xml" --data-binary @3526...-nfe.xml
+
+# ou JSON: { "xml": "<nfeProc ...>" }  ou  { "xmlBase64": "..." }
+```
+
+Para cada nota, a API confere a assinatura e se o emitente é a empresa, confirma a
+autorização na SEFAZ e cadastra a nota se ela ainda não existir. O `nfeProc` fica na
+base, com XML e DANFE disponíveis, e, em produção, é gravado na pasta configurada da
+empresa. Uma nota com erro não impede as outras:
+
+```json
+{ "recebidos": 2, "importadas": 1, "falhas": 1,
+  "resultados": [
+    { "arquivo": "a.xml", "ok": true, "chave": "3526...", "documentoId": "...", "numero": 71244,
+      "serie": 1, "modelo": 55, "status": 100, "cadastradaAgora": true, "aviso": null },
+    { "arquivo": "b.xml", "ok": false, "chave": "3526...", "erro": "A chave pertence a outro emitente." } ] }
+```
+
+`200` quando ao menos uma nota entrou; `422` quando nenhuma entrou; limite de 5 MB por
+arquivo e 500 arquivos por envio.
+
 ### Anexar o XML a uma nota sem XML
 
 ```
