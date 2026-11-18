@@ -20,7 +20,8 @@ public static class GeradorDanfe
     private const float MargemVertical = 18f;
     private const float Linha = 0.6f;  // espessura das bordas do grid
     private static readonly Color Cinza = Colors.Grey.Lighten3;
-    private static readonly Color CinzaRotulo = Colors.Grey.Darken1;
+    // Rotulos em quase-preto: o cinza claro anterior sumia na impressao.
+    private static readonly Color CinzaRotulo = Colors.Grey.Darken4;
 
     static GeradorDanfe()
     {
@@ -144,12 +145,12 @@ public static class GeradorDanfe
                     {
                         r.RelativeItem().BorderRight(Linha).PaddingRight(4).Column(cc =>
                         {
-                            cc.Item().Text("DATA DE RECEBIMENTO").FontSize(Rotulo).FontColor(CinzaRotulo);
+                            cc.Item().Text("DATA DE RECEBIMENTO").FontSize(Rotulo).FontColor(CinzaRotulo).SemiBold();
                             cc.Item().MinHeight(12);
                         });
                         r.RelativeItem(3).PaddingLeft(4).Column(cc =>
                         {
-                            cc.Item().Text("IDENTIFICACAO E ASSINATURA DO RECEBEDOR").FontSize(Rotulo).FontColor(CinzaRotulo);
+                            cc.Item().Text("IDENTIFICACAO E ASSINATURA DO RECEBEDOR").FontSize(Rotulo).FontColor(CinzaRotulo).SemiBold();
                             cc.Item().MinHeight(12);
                         });
                     });
@@ -175,7 +176,7 @@ public static class GeradorDanfe
                 // Emitente
                 row.RelativeItem(37).Padding(4).Column(c =>
                 {
-                    c.Item().Text("IDENTIFICACAO DO EMITENTE").FontSize(Rotulo).FontColor(CinzaRotulo);
+                    c.Item().Text("IDENTIFICACAO DO EMITENTE").FontSize(Rotulo).FontColor(CinzaRotulo).SemiBold();
                     // Logo do emitente (opcional). Sem logo, imprime so o texto.
                     if (d.Logo is { Length: > 0 })
                     {
@@ -221,7 +222,7 @@ public static class GeradorDanfe
                     c.Item().Height(37).AlignCenter().AlignMiddle()
                         .MaxWidth(LarguraSvg(barras))
                         .Svg(barras);
-                    c.Item().PaddingTop(3).Text("CHAVE DE ACESSO").FontSize(Rotulo).FontColor(CinzaRotulo);
+                    c.Item().PaddingTop(3).Text("CHAVE DE ACESSO").FontSize(Rotulo).FontColor(CinzaRotulo).SemiBold();
                     c.Item().AlignCenter().Text(DanfeDados.FormatarChave(d.Chave)).FontSize(7.5f).Bold();
                     c.Item().PaddingTop(4).AlignCenter().Text(
                         "Consulta de autenticidade no portal nacional da NF-e\nwww.nfe.fazenda.gov.br/portal ou no site da Sefaz Autorizadora")
@@ -486,13 +487,14 @@ public static class GeradorDanfe
             {
                 row.RelativeItem(6).Padding(4).Column(c =>
                 {
-                    c.Item().Text("INFORMACOES COMPLEMENTARES").FontSize(Rotulo).FontColor(CinzaRotulo);
-                    c.Item().PaddingTop(2).Text(d.InformacoesComplementares).FontSize(6.5f);
+                    c.Item().Text("INFORMACOES COMPLEMENTARES").FontSize(Rotulo).FontColor(CinzaRotulo).SemiBold();
+                    // Informacoes complementares em destaque (negrito e maior).
+                    c.Item().PaddingTop(2).Text(d.InformacoesComplementares).FontSize(8f).Bold();
                 });
                 row.RelativeItem(4).BorderLeft(Linha).Padding(4).Column(c =>
                 {
-                    c.Item().Text("RESERVADO AO FISCO").FontSize(Rotulo).FontColor(CinzaRotulo);
-                    c.Item().PaddingTop(2).Text(d.ReservadoFisco).FontSize(6.5f);
+                    c.Item().Text("RESERVADO AO FISCO").FontSize(Rotulo).FontColor(CinzaRotulo).SemiBold();
+                    c.Item().PaddingTop(2).Text(d.ReservadoFisco).FontSize(7.5f);
                 });
             });
         });
@@ -502,7 +504,7 @@ public static class GeradorDanfe
 
     /// <summary>Titulo de secao: faixa fina em negrito, colada ao grid abaixo.</summary>
     private static void Titulo(ColumnDescriptor col, string texto)
-        => col.Item().PaddingTop(1).Text(texto).Bold().FontSize(6);
+        => col.Item().PaddingTop(1).Text(texto).Bold().FontSize(6.5f).FontColor(Colors.Black);
 
     /// <summary>Celula rotulada: rotulo pequeno no topo e valor em negrito abaixo.</summary>
     private static void Campo(IContainer container, string rotulo, string valor,
@@ -510,7 +512,7 @@ public static class GeradorDanfe
     {
         container.Padding(2).Column(c =>
         {
-            c.Item().Text(rotulo).FontSize(Rotulo).FontColor(CinzaRotulo);
+            c.Item().Text(rotulo).FontSize(Rotulo).FontColor(CinzaRotulo).SemiBold();
             var linhaValor = direita ? c.Item().AlignRight() : c.Item();
             linhaValor.Text(string.IsNullOrWhiteSpace(valor) ? " " : valor)
                 .FontSize(destaque ? 9f : Valor).Bold();
@@ -519,9 +521,9 @@ public static class GeradorDanfe
 
     private static void Cab(IContainer container, string texto, bool esquerda = false)
     {
-        var cell = container.Background(Cinza).Border(0.4f).Padding(2);
+        var cell = container.Background(Colors.Grey.Lighten2).Border(0.4f).Padding(2);
         if (!esquerda) cell = cell.AlignCenter();
-        cell.Text(texto).FontSize(5f).Bold();
+        cell.Text(texto).FontSize(5f).Bold().FontColor(Colors.Black);
     }
 
     private static void Cel(IContainer container, string texto, bool esquerda = false, bool direita = false)
